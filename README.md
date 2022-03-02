@@ -19,7 +19,7 @@ visibility: PRIVATE
 - [ ] Remove this section
 - [ ] Invite the client team members to this repo
 
-#  partnership Workspace _of_ Informal Systems ⨯ Heliax
+# Partnership Workspace _of_ Informal Systems ⨯ Heliax
 
 This repository is a workspace for [Informal Systems](https://informal.systems/)
 and [Heliax](https://heliax.dev/) to collaborate on the system designed and developed
@@ -41,7 +41,7 @@ These artifacts include:
 git clone git@github.com:informalsystems/partnership-heliax.git
 ```
 
-### To clone all artifacts, including Interlay's source code at the relevant commits
+### To clone all artifacts, including Heliax's source code at the relevant commits
 
 ``` sh
 git clone --recurse-submodules git@github.com:informalsystems/partnership-heliax.git
