@@ -14,7 +14,7 @@ visibility: PRIVATE
   cd YYYY/QN/report
   make init
   ```
-- [ ] Add client artifacts to the `artifacts` subdirectory, using the instructions
+- [X] Add client artifacts to the `artifacts` subdirectory, using the instructions
   in the final section below.
 - [ ] Remove this section
 - [ ] Invite the client team members to this repo
