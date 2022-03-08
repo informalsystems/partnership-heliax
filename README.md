@@ -2,23 +2,6 @@
 visibility: PRIVATE
 ---
 
-# TODO: Repo Initialization
-
-- [X] Rename the directory `QN`, replacing `N` with the current quarter
-- [X] Rename the directory `YYYY`, replacing `YYYY` with the current year
-- [X] Make the following replacements in this file:
-  - `$Clientname$` -> clients name
-  - `$client-url$` -> client's home page
-- [ ] Initialize the report skeleton
-  ```sh
-  cd YYYY/QN/report
-  make init
-  ```
-- [X] Add client artifacts to the `artifacts` subdirectory, using the instructions
-  in the final section below.
-- [ ] Remove this section
-- [ ] Invite the client team members to this repo
-
 # Partnership Workspace _of_ Informal Systems ⨯ Heliax
 
 This repository is a workspace for [Informal Systems](https://informal.systems/)
