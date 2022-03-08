@@ -8,7 +8,13 @@ This repository is a workspace for [Informal Systems](https://informal.systems/)
 and [Heliax](https://heliax.dev/) to collaborate on the system designed and developed
 by Heliax in the course of the partnership.
 
-## Usage and organization
+## Issues & PRs
+
+In order to support asynchronous collaboration, technical discussions between
+Informal Systems & Heliax will usually happen in the form of either Issues,
+or WIP documents submitted as PRs (both in this repository).
+
+## Artifacts
 
 The artifacts for each engagement are gathered in a subdirectory named
 after the year and quarter in which the project was carried out.
