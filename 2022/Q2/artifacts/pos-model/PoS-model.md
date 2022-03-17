@@ -22,7 +22,7 @@ bond = {
 unbond = {
   validator = address,
   source = address
-  deltas = map<(epoch, epoch), int>}
+  deltas = map<(start:epoch, end:epoch), int>}
 
 slash = {
   epoch,
@@ -47,7 +47,7 @@ validator_set = {
 cur_epoch = 0 in \mathbb{Z} //current epoch
 
 validators //map from address to validator
-accounts //map from address to integer
+balances //map from address to integer
 bonds //map from address to map from address to bond
 unbonds //map from address to map from address to unbond
 slashes //map from address to list of slashes
@@ -96,64 +96,86 @@ self_bond(validator_address, amount)
   //add amount bond to delta at n+pipeline_length
   bonds[validator_address][validator_address].deltas[cur_epoch+pipeline_length] += amount
   //debit amount form validator account and credit it to the PoS account
-  accounts[validator_address] -= amount
-  accounts[pos] += amount
+  balances[validator_address] -= amount
+  balances[pos] += amount
   //compute new total_deltas and write it at n+pipeline_length
-  var total = add_to_total_deltas(validators[validator_address].total_deltas, amount)
-  validators[validator_address].total_deltas[cur_epoch+pipeline_length] = total
+  var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+pipeline_length)
+  validators[validator_address].total_deltas[cur_epoch+pipeline_length] = total + amount
+  //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
   validators[validator_address].voting_power[cur_epoch+pipeline_length] = compute_voting_power()
-  var e3 = fun(update_voting_power(validator_address))
-  var e4 = fun(update_total_voting_power())
-  var e5 = fun(update_validator_set))
-  append(pipeline[cur_epoch+pipeline_length], [e1,e2,e3,e4,e5])
+  total_voting_power[cur_epoch+pipeline_length] = compute_total_voting_power(cur_epoch+pipeline_length)
+  validator_sets[cur_epoch+pipeline_length] = compute_validator_sets()
 }
 ```
 
 ```go
+//Manu: I have a doubt here. I do not know when the unbond record is created. The texts and Ray say that inmediately, Tomas said that at n+unbound_length
 unbound(validator_address, amount)
 {
-  var total_bonded = compute_total_from_deltas(bond[validator_address][validator_address].deltas)
-  if (total_bonded < amount) then panic
-  var remain := amount
-  foreach (bond in bonds[validator_address][validator_address].deltas)) while (remain > 0) do
-    if amount > remain then
+  //compute total self-bonds
+  var selfbond = compute_total_from_deltas(bonds[validator_address][validator_address].deltas)
+  //check if there are enough selfbonds
+  //this serves to check that there are selfbonds (in the docs) and that these are greater than the amount we are trying to unbond (surprisingly not in the docs)
+  //Manu: why is the latter not checked?
+  if (total_bonded < amount) then panic()
+  //compute total self-unbonds and panic if the difference between selfbond and selfunbonds is less than 0 after taking amount from selfbonds
+  //Manu: I have no clue why. This lets them to maintain the invariant that selfbonds >= selfunbonds
+  var selfunbonds = compute_total_from_deltas(unbonds[validator_address][validator_address].deltas)
+  if (selfbond - selfunbond < amount) then panic()
+  //Decrement bond deltas and create unbonds
+  //Manu: many questions here, waiting for reply
+  var remain = amount
+  var next_epoch = cur_epoch + 1
+  while remain > 0 do
+    next_epoch = max{epoch | bonds[validator_address][validator_address].deltas[epoch].amount > 0 && epoch < next_epoch}
+    var bond = bonds[validator_address][validator_address].deltas[next_epoch]
+    if bond.amount > remain then
       var unbond_amount = remain
-      bonds[validator_address][validator_address].deltas[bond.epoch].amount -= remain
+      bonds[validator_address][validator_address].deltas[epoch_counter].amount -= remain
     else
-      var unbond_amount = next.amount
-      bonds[validator_address][validator_address].deltas[bond.epoch].amount = 0
-    unbonds[validator_address][validator_address].deltas[(bond.epoch,cur_epoch)] = unbond_amount
+      var unbond_amount = bond.amount
+      bonds[validator_address][validator_address].deltas[epoch_counter].amount = 0
+    unbonds[validator_address][validator_address].deltas[(bond.epoch,cur_epoch+unbonding_length)] = unbond_amount
     remain -= unbond_amount
-  var e1 = substract(validators[validator_address].total_deltas[token][cur_epoch+unbonding_length], amount)
-  var e2 = fun(update_voting_power,validator_address)
-  var e3 = fun(update_total_voting_power,[])
-  var e4 = fun(update_validator_set,[])
-  append(pipeline[cur_epoch+unbonding_length], [e1,e2,e3,e4])
+  //compute new total_deltas and write it at n+unbonding_length
+  var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+unbonding_length)
+  validators[validator_address].total_deltas[cur_epoch+unbonding_length] = total - amount
+  //update validator's voting_power, total_voting_power and validator_sets at n+unbonding_length
+  validators[validator_address].voting_power[cur_epoch+unbonding_length] = compute_voting_power()
+  total_voting_power[cur_epoch+unbonding_length] = compute_total_voting_power(cur_epoch+unbonding_length)
+  validator_sets[cur_epoch+unbonding_length] = compute_validator_sets())
 }
 ```
 
 ```go
 withdraw_unbonds(validator_address)
 {
-  var unbonds = unbonds[validator_address][validator_address].deltas)
-  if (unbonds == []) then panic
-  foreach (unbond in unbounds s.t. unbound.end <= cur_epoch) do
+  //panic if no self-unbonds]
+  //Manu: check that the epoch check is done on unbond.end and not somehting else. In docs says unbond.epoch, which is unclear
+  var selfunbonds = {unbond | unbond in unbonds[validator_address][validator_address] && unbond.end <= cur_epoch && unbond.amount > 0}
+  if (selfunbonds is empty) then panic()
+  //substract any pending slash before withdrawing
+  forall (unbond in selfunbonds) do
     var amount_after_slashing = unbond.amount
-    foreach (slash in slashes[validator_address] s.t. unbond.start <= slash.epoch && slash.epoch <= unbond.end)
+    forall (slash in slashes[validator_address] s.t. unbond.start <= slash.epoch && slash.epoch <= unbond.end)
       amount_after_slashing *= (10000 - slash.rate) / 10000)
     balance[validator_address] +=amount_after_slashing
     balance[pos] -= amount_after_slashing
-    //removing unbonds and slashes?
+    //Manu: removing unbonds and slashes? Am I missing something? This seems important.
 }
 ```
 
 ```go
-change_consensus_key(validator_address)
+change_consensus_key(validator_address, consensus_key)
 {
-  var e1 = set(validators[validator_address].consensus_key, consensus_key)
-  append(pipeline[cur_epoch+pipeline_length], e1)
+  //set consensus key at n + pipeline_length
+  validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
 }
 ```
+## Delegator transactions:
+
+It is essentially a copy and paste of the validator transactions with minor changes. Once we converge on the validator transactions, we can spell out the delegators' transactions.
+
 ## PoS functions
 
 ```go
@@ -166,8 +188,8 @@ new_evidence(evidence){
 end_of_epoch()
 {
   slashing()
-  jailing()
-  rewarding()
+  jailing() //TODO
+  rewarding() //TODO
 }
 ```
 
@@ -176,31 +198,39 @@ slashing(){
   //for each validator
   forall (address, validator in validators) do
     //compute set of slashes from the last two epochs
-    var slashes = {slash | slash in slashes[validator && cur_epoch-1 <= slash.epoch] }
+    var set_slashes = {slash | slash in slashes[address] && cur_epoch-1 <= slash.epoch] }
     //compute slash rate
-    var slash_rate = calculate_slash_rate(slashes)
-    forall (slash in slashes) do
-      var max_epoch := max{epoch | validators[address].total_deltas[epoch] != 0 && epoch <= evidence.epoch}
+    var slash_rate = calculate_slash_rate(set_slashes)
+    forall (slash in set_slashes) do
+      var max_epoch := max{epoch | validators[address].total_deltas[epoch] != 0 && epoch <= slash.epoch}
       var slashed_amount := validators[address].total_deltas[max_epoch]*slash_rate
-      e1 = substract(validators[validator_address].total_deltas[cur_epoch+pipeline_length], slashed_amount)
-      e2 = fun(update_voting_power(validator_address))
-      e3 = fun(update_total_voting_power())
-      e4 = fun(update_validator_set))
-      append(pipeline[cur_epoch+pipeline_length], [e1,e2,e3,e4])
+      //compute new total_deltas and write it at n+pipeline_length
+      var total = total_deltas_at(validators[address].total_deltas, cur_epoch+pipeline_length)
+      validators[address].total_deltas[cur_epoch+pipeline_length] = total - slashed_amount 
+      //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
+      validators[validator_address].voting_power[cur_epoch+pipeline_length] = compute_voting_power()
+      total_voting_power[cur_epoch+pipeline_length] = compute_total_voting_power(cur_epoch+pipeline_length)
+      validator_sets[cur_epoch+pipeline_length] = compute_validator_sets()
 }
 ```
 
 ```go
-calculate_slash_rate(slashes)
+compute_voting_power()
 {
-  var voting_power_fraction = 0
-  forall (slash in slashes) do
-    voting_power_fraction += slash.validator.voting_power
-  return max{0.01, min{1, voting_power_fraction^2 * 9}}
+
 }
 ```
 ```go
-compute_voting_power()
+compute_total_voting_power(epoch)
+{
+  var total = 0
+  forall (validator in validator_sets[epoch].active U validator_sets[epoch].inactive) do
+    sum= += validator.voting_power
+  return sum
+}
+```
+```go
+compute_validator_set()
 {
 
 }
@@ -220,9 +250,8 @@ calculate_slash_rate(slashes)
 
 ```go
 //Manu: I am not sure about this. I am guessing total_deltas accumulate deltas, so to update it one has to add it to the previous total_deltas
-add_to_total_deltas(total_deltas, amount){}
-  var max_epoch := max{epoch | total_deltas[epoch] != 0 && epoch <= cur_epoch+pipeline_length}
-  return amount + total_deltas[upper_epoch]
+total_deltas_at(total_deltas, upper_epoch){}
+  return max{epoch | total_deltas[epoch] != 0 && epoch <= upper_epoch}
 }
 ```
 
