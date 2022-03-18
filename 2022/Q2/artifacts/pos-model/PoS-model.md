@@ -63,7 +63,7 @@ become_validator(validator_address, consensus_key, staking_reward_address)
 {
   //reward_address is not in the docs/spec validator struct
   validators[validator_address].reward_address = staking_reward_address
-  //set status to pending inmediately
+  //set status to pending immediately
   validators[validator_address].state[cur_epoch] = pending
   //set status to candidate and consensus key at n + pipeline_length
   validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
