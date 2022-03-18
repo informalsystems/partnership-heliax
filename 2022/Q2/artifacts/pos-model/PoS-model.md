@@ -110,7 +110,7 @@ self_bond(validator_address, amount)
 
 ```go
 //Manu: I have a doubt here. I do not know when the unbond record is created. The texts and Ray say that inmediately, Tomas said that at n+unbound_length
-unbound(validator_address, amount)
+unbond(validator_address, amount)
 {
   //compute total self-bonds
   var selfbond = compute_total_from_deltas(bonds[validator_address][validator_address].deltas)
