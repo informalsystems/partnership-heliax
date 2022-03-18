@@ -59,11 +59,11 @@ total_voting_power //map from epoch to u64 (voting_power)
 ## Validator transactions:
 
 ```go
-become_validator(validator_address, consensus_key, staking_reward_address)
+become_validator(validator_address, consensus_key, staking_reward_addresspanic)
 {
   //reward_address is not in the docs/spec validator struct
   validators[validator_address].reward_address = staking_reward_address
-  //set status to pending immediately
+  //set status to pending inmediately
   validators[validator_address].state[cur_epoch] = pending
   //set status to candidate and consensus key at n + pipeline_length
   validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
@@ -117,7 +117,7 @@ unbound(validator_address, amount)
   //check if there are enough selfbonds
   //this serves to check that there are selfbonds (in the docs) and that these are greater than the amount we are trying to unbond (surprisingly not in the docs)
   //Manu: why is the latter not checked?
-  if (total_bonded < amount) then panic()
+  if (selfbonded < amount) then panic()
   //compute total self-unbonds and panic if the difference between selfbond and selfunbonds is less than 0 after taking amount from selfbonds
   //Manu: I have no clue why. This lets them to maintain the invariant that selfbonds >= selfunbonds
   var selfunbonds = compute_total_from_deltas(unbonds[validator_address][validator_address].deltas)
@@ -251,7 +251,8 @@ calculate_slash_rate(slashes)
 ```go
 //Manu: I am not sure about this. I am guessing total_deltas accumulate deltas, so to update it one has to add it to the previous total_deltas
 total_deltas_at(total_deltas, upper_epoch){}
-  return max{epoch | total_deltas[epoch] != 0 && epoch <= upper_epoch}
+  var max_epoch = max{epoch | total_deltas[epoch] != 0 && epoch <= upper_epoch}
+  return total_deltas[max_epoch]
 }
 ```
 
