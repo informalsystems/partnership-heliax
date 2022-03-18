@@ -117,21 +117,14 @@ self_bond(validator_address, amount)
 ```
 
 ```go
-//Manu: I have a doubt here. I do not know when the unbond record is created. The texts and Ray say that inmediately, Tomas said that at n+unbound_length
 unbond(validator_address, amount)
 {
   //compute total self-bonds
   var selfbond = compute_total_from_deltas(bonds[validator_address][validator_address].deltas)
   //check if there are enough selfbonds
-  //this serves to check that there are selfbonds (in the docs) and that these are greater than the amount we are trying to unbond (surprisingly not in the docs)
-  //Manu: why is the latter not checked?
+  //this serves to check that there are selfbonds (in the docs) and that these are greater than the amount we are trying to unbond
   if (selfbonded < amount) then panic()
-  //compute total self-unbonds and panic if the difference between selfbond and selfunbonds is less than 0 after taking amount from selfbonds
-  //Manu: I have no clue why. This lets them to maintain the invariant that selfbonds >= selfunbonds
-  var selfunbonds = compute_total_from_deltas(unbonds[validator_address][validator_address].deltas)
-  if (selfbond - selfunbond < amount) then panic()
   //Decrement bond deltas and create unbonds
-  //Manu: many questions here, waiting for reply
   var remain = amount
   var epoch_counter = cur_epoch + unbonding_length + 1
   while remain > 0 do
@@ -139,12 +132,12 @@ unbond(validator_address, amount)
     var bond = bonds[validator_address][validator_address].deltas[epoch_counter]
     if bond.amount > remain then
       var unbond_amount = remain
-      bonds[validator_address][validator_address].deltas[epoch_counter].amount -= remain
     else
       var unbond_amount = bond.amount
-      bonds[validator_address][validator_address].deltas[epoch_counter].amount = 0
-    unbonds[validator_address][validator_address].deltas[(bond.epoch,cur_epoch+unbonding_length)] = unbond_amount
+    unbonds[validator_address][validator_address].deltas[(bond.epoch,cur_epoch+unbonding_length)] += unbond_amount
     remain -= unbond_amount
+  //Manu: still unsure about this. Now it only creates a single bond record at cur_epoch+unbonding_length.
+  bonds[validator_address][validator_address].deltas[cur_epoch+unbonding_length].amount -= amount
   //compute new total_deltas and write it at n+unbonding_length
   var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+unbonding_length)
   validators[validator_address].total_deltas[cur_epoch+unbonding_length] = total - amount
