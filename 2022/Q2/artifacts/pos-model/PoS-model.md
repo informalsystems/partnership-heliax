@@ -5,55 +5,63 @@
 ## Data types
 
 ```go
-epoch = int
+type Addr
+type Key
+type Epoch int
+type VotingPower float
 
-validator = {
-  consensus_key = map<epoch, key>,
-  state = map<epoch, {inactive, pending, candidate}>,
-  total_deltas = map<epoch, int>,
-  voting_power = map<epoch, u64>,
-  reward_address = address}
-
-bond = {
-  validator = address,
-  source = address,
-  deltas = map<epoch, int>}
-
-unbond = {
-  validator = address,
-  source = address
-  deltas = map<(start:epoch, end:epoch), int>}
-
-slash = {
-  epoch,
-  block_height,
-  rate,
-  slash_type}
-
-weighted_validator = {
-  validator = address,
-  voting_power = u64
+type Validator struct {
+  consensus_key map<Epoch, Key>
+  state map<Epoch, {inactive, pending, candidate}>
+  total_deltas map<Epoch, amount:int> //amount default value = -1  
+  voting_power map<Epoch, float>
+  reward_address Addr
 }
 
-validator_set = {
-  active = orderedset<weighted_validator>
-  inactive = orderedset<weighted_validator>
+type Bond struct {
+  validator Addr
+  source Addr
+  deltas map<Epoch, int>
+  }
+
+type Unbond struct {
+  validator Addr
+  source Addr
+  deltas map<(start:Epoch, end:Epoch), int>
+}
+
+type Slash struct {
+  epoch Epoch
+  block_height int //not used
+  rate float
+  slash_type //not used
+}
+
+type WeightedValidator struct {
+  validator Addr
+  voting_power float
+}
+
+type ValidatorSet = {
+  active orderedset<WeightedValidator>
+  inactive orderedset<WeightedValidator>
 }
 ```
 
 ## Variables
 
+
 ```go
-cur_epoch = 0 in \mathbb{Z} //current epoch
+cur_epoch ← 0 in Epoch //current epoch
 
-validators //map from address to validator
-balances //map from address to integer
-bonds //map from address to map from address to bond
-unbonds //map from address to map from address to unbond
-slashes //map from address to list of slashes
+validators[] in Addr → Validator //map from address to validator
+balances[] in Addr → int //map from address to integer
+bonds[][] in (Addr X Addr) → Bond //map from address to map from address to bond
+unbonds[][] in (Addr X Addr) → Unbond  //map from address to map from address to unbond
+slashes[] in Addr → Slash //map from address to list of slashes
 
-validator_sets //map from epoch to validator_set
-total_voting_power //map from epoch to u64 (voting_power)
+validator_sets in Epoch → ValidatorSet //map from epoch to validator_set
+total_voting_power in Epoch to VotingPower //map from epoch to voting_power
 ```
 
 ## Validator transactions:
@@ -125,10 +133,10 @@ unbond(validator_address, amount)
   //Decrement bond deltas and create unbonds
   //Manu: many questions here, waiting for reply
   var remain = amount
-  var next_epoch = cur_epoch + 1
+  var epoch_counter = cur_epoch + unbonding_length + 1
   while remain > 0 do
-    next_epoch = max{epoch | bonds[validator_address][validator_address].deltas[epoch].amount > 0 && epoch < next_epoch}
-    var bond = bonds[validator_address][validator_address].deltas[next_epoch]
+    epoch_counter = max{epoch | bonds[validator_address][validator_address].deltas[epoch].amount > 0 && epoch < epoch_counter}
+    var bond = bonds[validator_address][validator_address].deltas[epoch_counter]
     if bond.amount > remain then
       var unbond_amount = remain
       bonds[validator_address][validator_address].deltas[epoch_counter].amount -= remain
@@ -184,6 +192,64 @@ new_evidence(evidence){
 }
 ```
 
+
+
+```go
+//Sergio: Shall we do updates to this state to happen once at the end of an epoch?
+//Manu: Still unclear from the docs
+compute_voting_power(validator_address, epoch)
+{
+
+}
+```
+```go
+compute_total_voting_power(epoch)
+{
+  var total = 0
+  forall (validator in validator_sets[epoch].active U validator_sets[epoch].inactive) do
+    sum= += validator.voting_power
+  return sum
+}
+```
+```go
+compute_validator_set(validator_address, epoch, power_after)
+{
+  var power_delta = 
+}
+```
+```go
+calculate_slash_rate(slashes)
+{
+  var voting_power_fraction = 0
+  forall (slash in slashes) do
+    voting_power_fraction += slash.validator.voting_power
+  return max{0.01, min{1, voting_power_fraction^2 * 9}}
+}
+```
+
+
+## Auxiliary functions
+
+```go
+
+total_deltas_at(total_deltas, upper_epoch){}
+  var max_epoch = max{epoch | total_deltas[epoch] != -1 && epoch <= upper_epoch}
+  return total_deltas[max_epoch]
+}
+```
+
+```go
+//There is no epoch upper-bound because the highest epoch must be cur_epoch+offset, and those must be considered.
+compute_total_from_deltas(deltas)
+{
+  var sum = 0
+  forall(delta in deltas){
+    sum += delta.amount
+  }
+  return sum
+}
+```
+<!-- 
 ```go
 end_of_epoch()
 {
@@ -214,57 +280,4 @@ slashing(){
       validator_sets[cur_epoch+pipeline_length] = compute_validator_sets()
 }
 ```
-
-```go
-//Sergio: Shall we do updates to this state to happen once at the end of an epoch?
-compute_voting_power()
-{
-
-}
-```
-```go
-compute_total_voting_power(epoch)
-{
-  var total = 0
-  forall (validator in validator_sets[epoch].active U validator_sets[epoch].inactive) do
-    sum= += validator.voting_power
-  return sum
-}
-```
-```go
-compute_validator_set(validator_address)
-{
-  
-}
-```
-```go
-calculate_slash_rate(slashes)
-{
-  var voting_power_fraction = 0
-  forall (slash in slashes) do
-    voting_power_fraction += slash.validator.voting_power
-  return max{0.01, min{1, voting_power_fraction^2 * 9}}
-}
-```
-
-
-## Auxiliary functions
-
-```go
-//Manu: I am not sure about this. I am guessing total_deltas accumulate deltas, so to update it one has to add it to the previous total_deltas
-total_deltas_at(total_deltas, upper_epoch){}
-  var max_epoch = max{epoch | total_deltas[epoch] != 0 && epoch <= upper_epoch}
-  return total_deltas[max_epoch]
-}
-```
-
-```go
-compute_total_from_deltas(deltas)
-{
-  var sum = 0
-  forall(delta in deltas){
-    sum += delta.amount
-  }
-  return sum
-}
-```
+-->
