@@ -102,9 +102,9 @@ self_bond(validator_address, amount)
   var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+pipeline_length)
   validators[validator_address].total_deltas[cur_epoch+pipeline_length] = total + amount
   //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
-  validators[validator_address].voting_power[cur_epoch+pipeline_length] = compute_voting_power()
+  validators[validator_address].voting_power[cur_epoch+pipeline_length] = compute_voting_power(validator_address, cur_epoch+pipeline_length)
   total_voting_power[cur_epoch+pipeline_length] = compute_total_voting_power(cur_epoch+pipeline_length)
-  validator_sets[cur_epoch+pipeline_length] = compute_validator_sets()
+  validator_sets[cur_epoch+pipeline_length] = compute_validator_sets(validator_address, cur_epoch+pipeline_length)
 }
 ```
 
@@ -188,6 +188,7 @@ new_evidence(evidence){
 end_of_epoch()
 {
   slashing()
+  //Manu: is there an special state for jalied validators?
   jailing() //TODO
   rewarding() //TODO
 }
@@ -215,6 +216,7 @@ slashing(){
 ```
 
 ```go
+//Sergio: Shall we do updates to this state to happen once at the end of an epoch?
 compute_voting_power()
 {
 
@@ -230,9 +232,9 @@ compute_total_voting_power(epoch)
 }
 ```
 ```go
-compute_validator_set()
+compute_validator_set(validator_address)
 {
-
+  
 }
 ```
 ```go
