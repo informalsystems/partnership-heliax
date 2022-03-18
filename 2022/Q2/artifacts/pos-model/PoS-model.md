@@ -76,7 +76,7 @@ become_validator(validator_address, consensus_key, staking_reward_addresspanic)
 deactivate(validator_address)
 {
   //set status to inactive at n + pipeline_length
-  validators[validator_address].status[cur_epoch+pipeline_length] = inactive
+  validators[validator_address].state[cur_epoch+pipeline_length] = inactive
 }
 ```
 
@@ -110,7 +110,7 @@ self_bond(validator_address, amount)
 
 ```go
 //Manu: I have a doubt here. I do not know when the unbond record is created. The texts and Ray say that inmediately, Tomas said that at n+unbound_length
-unbound(validator_address, amount)
+unbond(validator_address, amount)
 {
   //compute total self-bonds
   var selfbond = compute_total_from_deltas(bonds[validator_address][validator_address].deltas)
