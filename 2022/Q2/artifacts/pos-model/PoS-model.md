@@ -42,7 +42,7 @@ type WeightedValidator struct {
   voting_power float
 }
 
-type ValidatorSet = {
+type ValidatorSet struct {
   active orderedset<WeightedValidator>
   inactive orderedset<WeightedValidator>
 }
@@ -60,8 +60,8 @@ bonds[][] in (Addr X Addr) → Bond //map from address to map from address to bo
 unbonds[][] in (Addr X Addr) → Unbond  //map from address to map from address to unbond
 slashes[] in Addr → Slash //map from address to list of slashes
 
-validator_sets in Epoch → ValidatorSet //map from epoch to validator_set
-total_voting_power in Epoch to VotingPower //map from epoch to voting_power
+validator_sets[] in Epoch → ValidatorSet //map from epoch to validator_set
+total_voting_power[] in Epoch to VotingPower //map from epoch to voting_power
 ```
 
 ## Validator transactions:
