@@ -76,7 +76,7 @@ become_validator(validator_address, consensus_key, staking_reward_address)
 deactivate(validator_address)
 {
   //set status to inactive at n + pipeline_length
-  validators[validator_address].status[cur_epoch+pipeline_length] = inactive
+  validators[validator_address].state[cur_epoch+pipeline_length] = inactive
 }
 ```
 
