@@ -9,7 +9,7 @@ epoch = int
 
 validator = {
   consensus_key = map<epoch, key>,
-  state = map<epoch, {inactive, pending, candidate}}>,
+  state = map<epoch, {inactive, pending, candidate}>,
   total_deltas = map<epoch, int>,
   voting_power = map<epoch, u64>,
   reward_address = address}
