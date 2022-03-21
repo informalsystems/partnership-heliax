@@ -228,7 +228,7 @@ update_total_voting_power(epoch)
   var total = 0
   forall (validator in validator_sets[epoch].active U validator_sets[epoch].inactive) do
     total += validator.voting_power
-  total_voting_power[cur_epoch+unbonding_length] = sum
+  total_voting_power[cur_epoch+unbonding_length] = total
 }
 ```
 ```go
