@@ -67,7 +67,7 @@ total_voting_power[] in Epoch to VotingPower //map from epoch to voting_power
 ## Validator transactions:
 
 ```go
-become_validator(validator_address, consensus_key, staking_reward_addresspanic)
+become_validator(validator_address, consensus_key, staking_reward_address)
 {
   //reward_address is not in the docs/spec validator struct
   validators[validator_address].reward_address = staking_reward_address
