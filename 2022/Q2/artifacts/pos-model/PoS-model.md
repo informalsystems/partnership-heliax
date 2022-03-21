@@ -14,7 +14,7 @@ type Validator struct {
   consensus_key map<Epoch, Key>
   state map<Epoch, {inactive, pending, candidate}>
   total_deltas map<Epoch, amount:int> //amount default value = -1  
-  voting_power map<Epoch, float>
+  voting_power map<Epoch, VotingPower>
   reward_address Addr
 }
 
