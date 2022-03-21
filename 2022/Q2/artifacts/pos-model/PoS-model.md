@@ -7,7 +7,7 @@
 ```go
 type Addr
 type Key
-type Epoch int
+type Epoch uint
 type VotingPower float
 
 type Validator struct {
