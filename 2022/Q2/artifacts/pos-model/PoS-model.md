@@ -210,6 +210,7 @@ update_voting_power(validator_address, epoch)
 {
   //compute bonds from total_deltas 
   //Manu: if I understand correctly, total_deltas is total_bonded_tokens, including both selfbonded and delegated_bonds
+  //This is confirmed by Tomas
   var bonds = total_deltas_at(validators[validator_address].total_deltas, epoch)
   //compute the new voting power
   var power_after = votes_per_token*bonds
