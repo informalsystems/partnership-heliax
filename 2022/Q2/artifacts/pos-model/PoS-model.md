@@ -110,7 +110,7 @@ self_bond(validator_address, amount)
   var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+pipeline_length)
   validators[validator_address].total_deltas[cur_epoch+pipeline_length] = total + amount
   //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
-  power_before = validators[validator_address].voting_power[cur_epoch+pipeline_length]
+  power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+pipeline_length)
   power_after = update_voting_power(validator_address, cur_epoch+pipeline_length)
   update_total_voting_power(cur_epoch+pipeline_length)
   update_validator_sets(validator_address, cur_epoch+pipeline_length, power_before, power_after)
@@ -141,7 +141,7 @@ unbond(validator_address, amount)
   var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+unbonding_length)
   validators[validator_address].total_deltas[cur_epoch+unbonding_length] = total - amount
   //update validator's voting_power, total_voting_power and validator_sets at n+unbonding_length
-  power_before = validators[validator_address].voting_power[cur_epoch+unbonding_length]
+  power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+unbonding_length)
   power_after = update_voting_power(validator_address, cur_epoch+unbonding_length)
   update_total_voting_power(cur_epoch+unbonding_length)
   update_validator_sets(validator_address, cur_epoch+unbonding_length, power_before, power_after)
@@ -165,6 +165,8 @@ withdraw_unbonds(validator_address)
     balance[pos] -= amount_after_slashing
     //remove unbond
     unbonds[validator_address][validator_address].deltas[(start,end)] = 0
+    //The documentation says to "burn" slashed tokens. I guess this means moving them to the slash pool
+    //Anyway, this is not model, as currently those tokens never leave the slash pool.
 }
 ```
 
@@ -194,7 +196,7 @@ new_evidence(evidence){
   var total_offset = total_deltas_at(validators[evidence.validator].total_deltas, cur_epoch+pipeline_length)
   validators[evidence.validator].total_deltas[cur_epoch+pipeline_length] = total_offset - slashed_amount 
   //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
-  power_before = validators[evidence.validator].voting_power[cur_epoch+pipeline_length]
+  power_before = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+pipeline_length)
   power_after = update_voting_power(evidence.validator, cur_epoch+pipeline_length)
   update_total_voting_power(cur_epoch+pipeline_length)
   update_validator_sets(evidence.validator, cur_epoch+pipeline_length, power_before, power_after)
