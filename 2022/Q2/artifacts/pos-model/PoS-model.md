@@ -124,7 +124,7 @@ unbond(validator_address, amount)
   var selfbond = compute_total_from_deltas(bonds[validator_address][validator_address].deltas)
   //check if there are enough selfbonds
   //this serves to check that there are selfbonds (in the docs) and that these are greater than the amount we are trying to unbond
-  if (selfbonded < amount) then panic()
+  if (selfbond < amount) then panic()
   //Decrement bond deltas and create unbonds
   var remain = amount
   var epoch_counter = cur_epoch + unbonding_length + 1
@@ -228,7 +228,7 @@ update_total_voting_power(epoch)
 }
 ```
 ```go
-update_validator_set(validator_address, epoch, power_before, power_after)
+update_validator_sets(validator_address, epoch, power_before, power_after)
 {
   var min_active = first(validator_sets[epoch].active)
   var max_inactive = last(validator_sets[epoch].inactive)
