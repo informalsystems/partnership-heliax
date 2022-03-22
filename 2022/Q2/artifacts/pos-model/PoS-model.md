@@ -184,7 +184,7 @@ It is essentially a copy and paste of the validator transactions with minor chan
 ```go
 // assuming evidence is of type Slash for simplicity
 new_evidence(evidence){
-  append(slash[evidence.validator], evidence)
+  append(slashes[evidence.validator], evidence)
   //Manu: how to compute the slashed rate when there is no cubic slashing? now using evidence.slash_rate
   //Manu: the salshed amount is computed from total deltas up to evidence.epoch and its deducted at n+pipeline_length. Not saying this is a problem, but it is something to discuss
   //compute slash amount
