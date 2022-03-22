@@ -202,21 +202,17 @@ new_evidence(evidence){
 ```
 
 ```go
-//Sergio: Shall we do updates to this state to happen once at the end of an epoch?
+//Sergio: Shall we do updates to this state to happen once at the end of an epoch? This has been discussed.
+//Tomas agreed is interesting, but they are not doing it rigth know.
 //Manu: Still unclear from the docs. Why are unbonds substracted? When creating unbonds, we already decrement bonds,
-//so we should not substract them here again, unless I am missing something
+//so we should not substract them here again, unless I am missing something. This is now resolved: there wa a typo in the spec.
 update_voting_power(validator_address, epoch)
 {
-  //compute self_bonds from total_deltas
-  var self_bonds = total_deltas_at(bonds[validator_address][validator_address].total_deltas, epoch)
-  //set of delegators with bonds at epoch
-  var delegators = {delegator_address | total_deltas_at(bonds[delegator_address][validator_address].total_deltas, epoch) > 0)
-  //sum of all delegated bonds
-  var delegated_bonds = 0
-  forall (delegator at delegators) do
-    delegated_bonds += total_deltas_at(bonds[delegator_address][validator_address].total_deltas, epoch)
+  //compute bonds from total_deltas 
+  //Manu: if I understand correctly, total_deltas is total_bonded_tokens, including both selfbonded and delegated_bonds
+  var bonds = total_deltas_at(validators[validator_address].total_deltas, epoch)
   //compute the new voting power
-  var power_after = votes_per_token*(self_bonds+delegated_bonds)
+  var power_after = votes_per_token*bonds
   //update voting power and return it
   validators[validator_address].voting_power[epoch] = power_after
   return power_after
@@ -267,8 +263,9 @@ update_validator_set(validator_address, epoch, power_before, power_after)
 ```go
 
 total_deltas_at(total_deltas, upper_epoch){}
-  var max_epoch = max{epoch | total_deltas[epoch] != -1 && epoch <= upper_epoch}
-  return total_deltas[max_epoch]
+  var assigned_epochs = {epoch | total_deltas[epoch] != -1 && epoch <= upper_epoch}
+  if (assigned_epochs is empty) then return 0
+  else return total_deltas[max{assigned_epochs}]
 }
 ```
 
