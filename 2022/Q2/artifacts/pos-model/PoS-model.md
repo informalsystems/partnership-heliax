@@ -111,7 +111,7 @@ self_bond(validator_address, amount)
   validators[validator_address].total_deltas[cur_epoch+pipeline_length] = total + amount
   //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
   power_before = validators[validator_address].voting_power[cur_epoch+pipeline_length]
-  power_after = update_voting_power(validator_address, cur_epoch+pending_length)
+  power_after = update_voting_power(validator_address, cur_epoch+pipeline_length)
   update_total_voting_power(cur_epoch+pipeline_length)
   update_validator_sets(validator_address, cur_epoch+pipeline_length, power_before, power_after)
 }
@@ -195,9 +195,9 @@ new_evidence(evidence){
   validators[evidence.validator].total_deltas[cur_epoch+pipeline_length] = total_offset - slashed_amount 
   //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
   power_before = validators[evidence.validator].voting_power[cur_epoch+pipeline_length]
-  power_after = update_voting_power(evidence.validator, cur_epoch+pending_length)
-  update_total_voting_power(cur_epoch+pending_length)
-  update_validator_sets(evidence.validator, cur_epoch+pending_length, power_before, power_after)
+  power_after = update_voting_power(evidence.validator, cur_epoch+pipeline_length)
+  update_total_voting_power(cur_epoch+pipeline_length)
+  update_validator_sets(evidence.validator, cur_epoch+pipeline_length, power_before, power_after)
 }
 ```
 
