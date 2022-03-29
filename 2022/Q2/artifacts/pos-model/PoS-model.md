@@ -69,32 +69,52 @@ total_voting_power[] in Epoch to VotingPower //map from epoch to voting_power
 ```go
 become_validator(validator_address, consensus_key, staking_reward_address)
 {
-  //reward_address is not in the docs/spec validator struct
-  validators[validator_address].reward_address = staking_reward_address
-  //set status to pending inmediately
-  validators[validator_address].state[cur_epoch] = pending
-  //set status to candidate and consensus key at n + pipeline_length
-  validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
-  validators[validator_address].state[cur_epoch+pipeline_length] = candidate
+  //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L421
+  //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L459
+  //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
+  //COMMENT: In the code they check not only at cur_epoch but at all epochs between cur_epoch and the offset. Double-check
+  //COMMENT: I do not see in the code where they check that the consensus key is not an old one (this is in the docs).
+  //COMMENT: todo: check there are no consensus_key changes schedule between cur_epoch and the offset. If this necessary though? should
+  //not be enough with the state checks?
+  //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L515
+  if (read_epoched_field(validators[validator_address].state, cur_epoch) in {⊥, inactive} &&
+      read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {pending, inactive} &&
+      validator_address != staking_reward_address){
+    //reward_address is not in the docs/spec validator struct
+    validators[validator_address].reward_address = staking_reward_address
+    //set status to pending inmediately
+    validators[validator_address].state[cur_epoch] = pending
+    //set status to candidate and consensus key at n + pipeline_length
+    validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
+    validators[validator_address].state[cur_epoch+pipeline_length] = candidate
+  }
 }
 ```
 
 ```go
-//COMMENT: races between become_validate or reactivate and deactivate. deactivate does not write anything inmediately. This is related to the validity_predicate
+//COMMENT: races between become_validate or reactivate and deactivate. deactivate does not write anything inmediately. This is related to the validity predicates
 deactivate(validator_address)
 {
-  //set status to inactive at n + pipeline_length
-  validators[validator_address].state[cur_epoch+pipeline_length] = inactive
+  //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
+  if (read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {candidate, pending}){
+    //set status to inactive at n + pipeline_length
+    validators[validator_address].state[cur_epoch+pipeline_length] = inactive
+  }
 }
 ```
 
 ```go
 reactivate(validator_address)
 {
-  //set status to pending inmediately
-  validators[validator_address].state[cur_epoch] = pending
-  //set status to candidate at n + pipeline_length
-  validators[validator_address].state[cur_epoch+pipeline_length] = candidate
+  //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L459
+  //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
+  if (read_epoched_field(validators[validator_address].state, cur_epoch) == inactive &&
+      read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {pending, inactive}){
+    //set status to pending inmediately
+    validators[validator_address].state[cur_epoch] = pending
+    //set status to candidate at n + pipeline_length
+    validators[validator_address].state[cur_epoch+pipeline_length] = candidate
+  }
 }
 ```
 
@@ -275,8 +295,15 @@ update_validator_sets(validator_address, epoch, power_before, power_after)
 ## Auxiliary functions
 
 ```go
+read_epoched_field(field, upper_epoch){
+  var assigned_epochs = {epoch | total_deltas[epoch] != ⊥ && epoch <= upper_epoch}
+  if (assigned_epochs is empty) then return ⊥
+  else return field[max{assigned_epochs}]
+}
+```
 
-total_deltas_at(total_deltas, upper_epoch){}
+```go
+total_deltas_at(total_deltas, upper_epoch){
   var assigned_epochs = {epoch | total_deltas[epoch] != -1 && epoch <= upper_epoch}
   if (assigned_epochs is empty) then return 0
   else return total_deltas[max{assigned_epochs}]
@@ -294,7 +321,18 @@ compute_total_from_deltas(deltas)
   return sum
 }
 ```
+
+## Invariants
+
+### From the PoS validity predicate
+
+These are derived from the check on the accumulators that the PoS validity predicate does.
+
+* for any address . `validators[address].total_deltas >= 0`
+
+
 <!-- 
+CUBIC SLASHING
 ```go
 end_of_epoch()
 {
