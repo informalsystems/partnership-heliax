@@ -64,7 +64,7 @@ validator_sets[] in Epoch → ValidatorSet //map from epoch to validator_set
 total_voting_power[] in Epoch to VotingPower //map from epoch to voting_power
 ```
 
-## Validator transactions:
+## Validator transactions
 
 ```go
 become_validator(validator_address, consensus_key, staking_reward_address)
@@ -79,7 +79,7 @@ become_validator(validator_address, consensus_key, staking_reward_address)
   //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L515
   if (read_epoched_field(validators[validator_address].state, cur_epoch) in {⊥, inactive} &&
       read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {pending, inactive} &&
-      validator_address != staking_reward_address){
+      validator_address != staking_reward_address) then
     //reward_address is not in the docs/spec validator struct
     validators[validator_address].reward_address = staking_reward_address
     //set status to pending inmediately
@@ -87,7 +87,6 @@ become_validator(validator_address, consensus_key, staking_reward_address)
     //set status to candidate and consensus key at n + pipeline_length
     validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
-  }
 }
 ```
 
@@ -96,10 +95,9 @@ become_validator(validator_address, consensus_key, staking_reward_address)
 deactivate(validator_address)
 {
   //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
-  if (read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {candidate, pending}){
+  if (read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {candidate, pending}) then
     //set status to inactive at n + pipeline_length
     validators[validator_address].state[cur_epoch+pipeline_length] = inactive
-  }
 }
 ```
 
@@ -109,12 +107,11 @@ reactivate(validator_address)
   //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L459
   //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
   if (read_epoched_field(validators[validator_address].state, cur_epoch) == inactive &&
-      read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {pending, inactive}){
+      read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {pending, inactive}) then
     //set status to pending inmediately
     validators[validator_address].state[cur_epoch] = pending
     //set status to candidate at n + pipeline_length
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
-  }
 }
 ```
 
@@ -204,9 +201,85 @@ change_consensus_key(validator_address, consensus_key)
   validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
 }
 ```
-## Delegator transactions:
+## Delegator transactions
 
-It is essentially a copy and paste of the validator transactions with minor changes. Once we converge on the validator transactions, we can spell out the delegators' transactions.
+It is essentially a copy and paste of the validator transactions with minor changes. Once we converge on the validator transactions, we can propagate the changes to the delegator transactions.
+
+```go
+delegate(validator_address, delegator_address, amount, offset_length)
+{
+  //add amount bond to delta at n+pipeline_length
+  bonds[delegator_address][validator_address].deltas[cur_epoch+offset_length] += amount
+  //debit amount form delegator account and credit it to the PoS account
+  balances[delegator_address] -= amount
+  balances[pos] += amount
+  //compute new total_deltas and write it at n+pipeline_length
+  var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+offset_length)
+  validators[validator_address].total_deltas[cur_epoch+offset_length] = total + amount
+  //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
+  power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+offset_length)
+  power_after = update_voting_power(validator_address, cur_epoch+offset_length)
+  update_total_voting_power(cur_epoch+offset_length)
+  update_validator_sets(validator_address, cur_epoch+offset_length, power_before, power_after)
+}
+```
+
+```go
+undelegate(validator_address, delegator_address, amount)
+{
+  //compute total bonds from delegator to validator
+  var delbonds = compute_total_from_deltas(bonds[delegator_address][validator_address].deltas)
+  //check if there are enough bonds
+  //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
+  if (delbond < amount) then panic()
+  //Decrement bond deltas and create unbonds
+  var remain = amount
+  var epoch_counter = cur_epoch + unbonding_length + 1
+  while remain > 0 do
+    epoch_counter = max{epoch | bonds[delegator_address][validator_address].deltas[epoch] > 0 && epoch < epoch_counter}
+    var bond = bonds[delegator_address][validator_address].deltas[epoch_counter]
+    if bond > remain then var unbond_amount = remain
+    else var unbond_amount = bond
+    unbonds[delegator_address][validator_address].deltas[(epoch_counter,cur_epoch+unbonding_length)] += unbond_amount
+    remain -= unbond_amount
+  bonds[delegator_address][validator_address].deltas[cur_epoch+unbonding_length] -= amount
+  //compute new total_deltas and write it at n+unbonding_length
+  var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+unbonding_length)
+  validators[validator_address].total_deltas[cur_epoch+unbonding_length] = total - amount
+  //update validator's voting_power, total_voting_power and validator_sets at n+unbonding_length
+  power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+unbonding_length)
+  power_after = update_voting_power(validator_address, cur_epoch+unbonding_length)
+  update_total_voting_power(cur_epoch+unbonding_length)
+  update_validator_sets(validator_address, cur_epoch+unbonding_length, power_before, power_after)
+}
+```
+
+```go
+redelegate(src_validator_address, dest_validator_address, delegator_address, amount)
+{
+  undelegate(src_validator_address, delegator_address, amount)
+  delegate(dst_validator_address, delegator_address, amount, unbonding_length)
+}
+```
+
+```go
+withdraw_unbonds(delegator_address)
+{
+  forall (validator_address in validators) do
+  //panic if no self-unbonds
+    var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
+    if (delunbonds is not empty) then 
+      //substract any pending slash before withdrawing
+      forall (<start,end,amount> in delunbonds) do
+        var amount_after_slashing = unbond.amount
+        forall (slash in slashes[validator_address] s.t. start <= slash.epoch && slash.epoch <= end)
+          amount_after_slashing *= (10000 - slash.rate) / 10000)
+        balance[delegator_address] += amount_after_slashing
+        balance[pos] -= amount_after_slashing
+        //remove unbond
+        unbonds[delegator_address][validator_address].deltas[(start,end)] = 0
+}
+```
 
 ## PoS functions
 
@@ -328,7 +401,11 @@ compute_total_from_deltas(deltas)
 
 These are derived from the check on the accumulators that the PoS validity predicate does.
 
-* for any address . `validators[address].total_deltas >= 0`
+* for any epoch, address . `validators[address].total_deltas[epoch] >= 0`
+https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L694-L698
+https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L763-L767
+
+* 
 
 
 <!-- 
