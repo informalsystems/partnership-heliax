@@ -394,7 +394,7 @@ compute_total_from_deltas(deltas)
   return sum
 }
 ```
-
+<!--
 ## Invariants (WIP)
 
 ### From the PoS validity predicate
@@ -429,7 +429,7 @@ https://docs.anoma.network/master/explore/design/ledger/pos-integration.html:
 "For each `total_deltas`, there must be the same delta value in `bond_delta`"
 https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L1244-L1250
 
-<!--
+
 ### Invariant 3
 > for any validator, epoch . `total_bonds(validator, epoch) `
 -->
