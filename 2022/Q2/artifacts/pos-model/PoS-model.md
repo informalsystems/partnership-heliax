@@ -395,18 +395,44 @@ compute_total_from_deltas(deltas)
 }
 ```
 
-## Invariants
+## Invariants (WIP)
 
 ### From the PoS validity predicate
 
 These are derived from the check on the accumulators that the PoS validity predicate does.
 
-* for any epoch, address . `validators[address].total_deltas[epoch] >= 0`
+* We use `validators[validator].total_deltas[epoch]` when we mean 
+`total_deltas_at(validators[validator].total_deltas, epoch)`. We do the same with deltas.
+* Function `total_bonds(validator, epoch)` aggregates all the bonds of a given validator at a given epoch.
+
+```go
+total_bonds(validator, epoch)
+{
+  var total_bonds = 0
+  var addresses = {address | bonds[address][validator].deltas[epoch] > 0}
+  forall (address in addresses) do
+    total_bonds += bonds[address][validator].deltas[epoch]
+  return total_bonds
+}
+```
+
+### Invariant 1
+> for any epoch, validator . `validators[validator].total_deltas[epoch] >= 0`
+
 https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L694-L698
 https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L763-L767
 
-* 
+### Invariant 2
+> for any validator, epoch . `validators[validator].total_deltas[epoch] == total_bonds(validator, epoch)`
 
+https://docs.anoma.network/master/explore/design/ledger/pos-integration.html:
+"For each `total_deltas`, there must be the same delta value in `bond_delta`"
+https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L1244-L1250
+
+<!--
+### Invariant 3
+> for any validator, epoch . `total_bonds(validator, epoch) `
+-->
 
 <!-- 
 CUBIC SLASHING
@@ -450,5 +476,4 @@ calculate_slash_rate(slashes)
   return max{0.01, min{1, voting_power_fraction^2 * 9}}
 }
 ```
-
 -->
