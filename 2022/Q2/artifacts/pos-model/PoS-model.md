@@ -67,7 +67,7 @@ total_voting_power[] in Epoch to VotingPower //map from epoch to voting_power
 ## Validator transactions
 
 ```go
-become_validator(validator_address, consensus_key, staking_reward_address)
+tx_become_validator(validator_address, consensus_key, staking_reward_address)
 {
   //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L421
   //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L459
@@ -78,7 +78,7 @@ become_validator(validator_address, consensus_key, staking_reward_address)
   //not be enough with the state checks?
   //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L515
   if (read_epoched_field(validators[validator_address].state, cur_epoch) in {⊥, inactive} &&
-      read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {pending, inactive} &&
+      read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {⊥, pending, inactive} &&
       validator_address != staking_reward_address) then
     //reward_address is not in the docs/spec validator struct
     validators[validator_address].reward_address = staking_reward_address
@@ -92,7 +92,7 @@ become_validator(validator_address, consensus_key, staking_reward_address)
 
 ```go
 //COMMENT: races between become_validate or reactivate and deactivate. deactivate does not write anything inmediately. This is related to the validity predicates
-deactivate(validator_address)
+tx_deactivate(validator_address)
 {
   //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
   if (read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {candidate, pending}) then
@@ -102,7 +102,7 @@ deactivate(validator_address)
 ```
 
 ```go
-reactivate(validator_address)
+tx_reactivate(validator_address)
 {
   //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L459
   //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
@@ -116,86 +116,30 @@ reactivate(validator_address)
 ```
 
 ```go
-self_bond(validator_address, amount)
+tx_self_bond(validator_address, amount)
 {
-  //add amount bond to delta at n+pipeline_length
-  bonds[validator_address][validator_address].deltas[cur_epoch+pipeline_length] += amount
-  //debit amount form validator account and credit it to the PoS account
-  balances[validator_address] -= amount
-  balances[pos] += amount
-  //compute new total_deltas and write it at n+pipeline_length
-  var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+pipeline_length)
-  validators[validator_address].total_deltas[cur_epoch+pipeline_length] = total + amount
-  //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
-  power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+pipeline_length)
-  power_after = update_voting_power(validator_address, cur_epoch+pipeline_length)
-  update_total_voting_power(cur_epoch+pipeline_length)
-  update_validator_sets(validator_address, cur_epoch+pipeline_length, power_before, power_after)
+  bond(validator_address, validator_address, amount, pipeline_length)
 }
 ```
 
 ```go
-unbond(validator_address, amount)
+tx_unbond(validator_address, amount)
 {
-  //compute total self-bonds
-  var selfbond = compute_total_from_deltas(bonds[validator_address][validator_address].deltas)
-  //check if there are enough selfbonds
-  //this serves to check that there are selfbonds (in the docs) and that these are greater than the amount we are trying to unbond
-  if (selfbond < amount) then panic()
-  //Decrement bond deltas and create unbonds
-  var remain = amount
-  //COMMENT: Why initializing epoch_counter to cur_epoch + unbonding_length + 1? First there cannot be positive bonds beyond
-  //cur_epoch + pending_length. Second, this could lead to scenarios in which tonce start unbonding before a bond is materialized.
-  //See: https://github.com/informalsystems/partnership-heliax/pull/4#discussion_r833177915
-  var epoch_counter = cur_epoch + unbonding_length + 1
-  while remain > 0 do
-    epoch_counter = max{epoch | bonds[validator_address][validator_address].deltas[epoch] > 0 && epoch < epoch_counter}
-    var bond = bonds[validator_address][validator_address].deltas[epoch_counter]
-    if bond > remain then var unbond_amount = remain
-    else var unbond_amount = bond
-    unbonds[validator_address][validator_address].deltas[(epoch_counter,cur_epoch+unbonding_length)] += unbond_amount
-    remain -= unbond_amount
-  //COMMENT: still unsure about this. Now it only creates a single bond record at cur_epoch+unbonding_length.
-  bonds[validator_address][validator_address].deltas[cur_epoch+unbonding_length] -= amount
-  //compute new total_deltas and write it at n+unbonding_length
-  var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+unbonding_length)
-  //COMMENT: invariant: given an epoch e, validators[validator_address].total_deltas[e] >= bonds[validator_address][validator_address].deltas 
-  //(selfbonds). This is beacuse total_deltas includes selfbonds and delegated-bonds. Needs to be proved.
-  //COMMENT: thinking more about this issue, maybe that's not true due to slashing! So there might be a problem here as total-deltas may go
-  //below 0.
-  validators[validator_address].total_deltas[cur_epoch+unbonding_length] = total - amount
-  //update validator's voting_power, total_voting_power and validator_sets at n+unbonding_length
-  power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+unbonding_length)
-  power_after = update_voting_power(validator_address, cur_epoch+unbonding_length)
-  update_total_voting_power(cur_epoch+unbonding_length)
-  update_validator_sets(validator_address, cur_epoch+unbonding_length, power_before, power_after)
-}
+  unbond(validator_address, validator_address, amount)
 ```
 
 ```go
-withdraw_unbonds(validator_address)
+tx_withdraw_unbonds_validator(validator_address)
 {
   //panic if no self-unbonds
-  //COMMENT: check that the epoch check is done on unbond.end and not somehting else. In docs says unbond.epoch, which is unclear
   var selfunbonds = {<start,end,amount> | amount = unbonds[validator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
   if (selfunbonds is empty) then panic()
-  //substract any pending slash before withdrawing
-  forall (<start,end,amount> in selfunbonds) do
-    //COMMENT: is the amount slashed here the same than the one slashed when evidence is found? This is an important point
-    var amount_after_slashing = unbond.amount
-    forall (slash in slashes[validator_address] s.t. start <= slash.epoch && slash.epoch <= end)
-      amount_after_slashing *= (10000 - slash.rate) / 10000)
-    balance[validator_address] += amount_after_slashing
-    balance[pos] -= amount_after_slashing
-    //remove unbond
-    unbonds[validator_address][validator_address].deltas[(start,end)] = 0
-    //COMMENT: the documentation says to "burn" slashed tokens. I guess this means moving them to the slash pool
-    //Anyway, this is not model, as currently those tokens never leave the slash pool.
+  else withdraw(validator_address, validator_address)
 }
 ```
 
 ```go
-change_consensus_key(validator_address, consensus_key)
+tx_change_consensus_key(validator_address, consensus_key)
 {
   //set consensus key at n + pipeline_length
   validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
@@ -206,17 +150,52 @@ change_consensus_key(validator_address, consensus_key)
 It is essentially a copy and paste of the validator transactions with minor changes. Once we converge on the validator transactions, we can propagate the changes to the delegator transactions.
 
 ```go
-delegate(validator_address, delegator_address, amount, offset_length)
+tx_delegate(validator_address, delegator_address, amount)
 {
-  //add amount bond to delta at n+pipeline_length
+  bond(validator_address, delegator_address, amount, pipeline_length)
+}
+```
+
+```go
+tx_undelegate(validator_address, delegator_address, amount)
+{
+  unbond(src_validator_address, delegator_address, amount)
+}
+```
+
+```go
+tx_redelegate(src_validator_address, dest_validator_address, delegator_address, amount)
+{
+  unbond(src_validator_address, delegator_address, amount)
+  bond(dst_validator_address, delegator_address, amount, unbonding_length)
+}
+```
+
+```go
+tx_withdraw_unbonds_delegator(delegator_address)
+{
+  forall (validator_address in validators) do
+    withdraw(validator_address, delegator_address)
+}
+```
+
+## PoS functions
+
+
+```go
+//This function is called by transactions tx_self_bond, tx_delegate and tx_redelegate
+//the only possible values for offset_length are pipeline_length and ubonding_length
+func bond(validator_address, delegator_address, amount, offset_length)
+{
+  //add amount bond to delta at n+offset_length
   bonds[delegator_address][validator_address].deltas[cur_epoch+offset_length] += amount
   //debit amount form delegator account and credit it to the PoS account
   balances[delegator_address] -= amount
   balances[pos] += amount
-  //compute new total_deltas and write it at n+pipeline_length
+  //compute new total_deltas and write it at n+offset_length
   var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+offset_length)
   validators[validator_address].total_deltas[cur_epoch+offset_length] = total + amount
-  //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
+  //update validator's voting_power, total_voting_power and validator_sets at n+offset_length
   power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+offset_length)
   power_after = update_voting_power(validator_address, cur_epoch+offset_length)
   update_total_voting_power(cur_epoch+offset_length)
@@ -225,15 +204,21 @@ delegate(validator_address, delegator_address, amount, offset_length)
 ```
 
 ```go
-undelegate(validator_address, delegator_address, amount)
+//This function is called by transactions tx_unbond, tx_undelegate and tx_redelegate
+func unbond(validator_address, delegator_address, amount)
 {
   //compute total bonds from delegator to validator
-  var delbonds = compute_total_from_deltas(bonds[delegator_address][validator_address].deltas)
+  //COMMENT: it computes deltas up to cur_epoch + unbonding_length, is this correct? This is like that to match from where 
+  //the model starts decrementing bonds.
+  var delbonds = compute_total_from_deltas(bonds[delegator_address][validator_address].deltas, cur_epoch + unbonding_length)
   //check if there are enough bonds
   //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
-  if (delbond < amount) then panic()
+  if (delbonds < amount) then panic()
   //Decrement bond deltas and create unbonds
   var remain = amount
+  //COMMENT: Why initializing epoch_counter to cur_epoch + unbonding_length + 1? First there cannot be positive bonds beyond
+  //cur_epoch + pipeline_length. Second, this could lead to scenarios in which one starts unbonding before a bond is materialized.
+  //See: https://github.com/informalsystems/partnership-heliax/issues/6
   var epoch_counter = cur_epoch + unbonding_length + 1
   while remain > 0 do
     epoch_counter = max{epoch | bonds[delegator_address][validator_address].deltas[epoch] > 0 && epoch < epoch_counter}
@@ -242,9 +227,15 @@ undelegate(validator_address, delegator_address, amount)
     else var unbond_amount = bond
     unbonds[delegator_address][validator_address].deltas[(epoch_counter,cur_epoch+unbonding_length)] += unbond_amount
     remain -= unbond_amount
+  //COMMENT: still unsure about this. Now it only creates a single bond record at cur_epoch+unbonding_length.
   bonds[delegator_address][validator_address].deltas[cur_epoch+unbonding_length] -= amount
   //compute new total_deltas and write it at n+unbonding_length
   var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+unbonding_length)
+  //COMMENT: invariant: given an epoch e, validators[validator_address].total_deltas[e] >= bonds[delegator_address][validator_address].deltas 
+  // This is beacuse total_deltas includes selfbonds and delegated-bonds. Needs to be proved.
+  //COMMENT: thinking more about this issue, maybe that's not true due to slashing! So there might be a problem here as total-deltas may go
+  //below 0.
+  //See: https://github.com/informalsystems/partnership-heliax/issues/7
   validators[validator_address].total_deltas[cur_epoch+unbonding_length] = total - amount
   //update validator's voting_power, total_voting_power and validator_sets at n+unbonding_length
   power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+unbonding_length)
@@ -255,39 +246,31 @@ undelegate(validator_address, delegator_address, amount)
 ```
 
 ```go
-redelegate(src_validator_address, dest_validator_address, delegator_address, amount)
+//This function is called by transactions tx_withdraw_unbonds_validator and tx_withdraw_unbonds_delegator
+func withdraw(validator_address, delegator_address)
 {
-  undelegate(src_validator_address, delegator_address, amount)
-  delegate(dst_validator_address, delegator_address, amount, unbonding_length)
+  //COMMENT: check that the epoch check is done on unbond.end and not somehting else. In docs says unbond.epoch, which is unclear
+  var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
+  //substract any pending slash before withdrawing
+  forall (<start,end,amount> in selfunbonds) do
+    //COMMENT: is the amount slashed here the same than the one slashed when evidence is found? This is an important point
+    var amount_after_slashing = unbond.amount
+    forall (slash in slashes[validator_address] s.t. start <= slash.epoch && slash.epoch <= end)
+      amount_after_slashing *= (10000 - slash.rate) / 10000)
+    balance[validator_address] += amount_after_slashing
+    balance[pos] -= amount_after_slashing
+    //remove unbond
+    unbonds[delegator_address][validator_address].deltas[(start,end)] = 0
+    //COMMENT: the documentation says to "burn" slashed tokens. I guess this means moving them to the slash pool
+    //Anyway, this is not model, as currently those tokens never leave the slash pool.
 }
 ```
-
-```go
-withdraw_unbonds(delegator_address)
-{
-  forall (validator_address in validators) do
-  //panic if no self-unbonds
-    var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
-    if (delunbonds is not empty) then 
-      //substract any pending slash before withdrawing
-      forall (<start,end,amount> in delunbonds) do
-        var amount_after_slashing = unbond.amount
-        forall (slash in slashes[validator_address] s.t. start <= slash.epoch && slash.epoch <= end)
-          amount_after_slashing *= (10000 - slash.rate) / 10000)
-        balance[delegator_address] += amount_after_slashing
-        balance[pos] -= amount_after_slashing
-        //remove unbond
-        unbonds[delegator_address][validator_address].deltas[(start,end)] = 0
-}
-```
-
-## PoS functions
 
 ```go
 //assuming evidence is of type Slash for simplicity
 //COMMENT:can total_deltas go below zero due to slashing?
 //Check https://github.com/informalsystems/partnership-heliax/pull/4#discussion_r833447459
-new_evidence(evidence){
+func new_evidence(evidence){
   append(slashes[evidence.validator], evidence)
   //COMMENT: how to compute the slashed rate when there is no cubic slashing? now using evidence.slash_rate
   //COMMENT: the salshed amount is computed from total deltas up to evidence.epoch and its deducted at n+pipeline_length. Not saying this is a problem, but it is something to discuss
@@ -310,7 +293,7 @@ new_evidence(evidence){
 //Tomas agreed is interesting, but they are not doing it rigth know.
 //COMMENT: still unclear from the docs. Why are unbonds substracted? When creating unbonds, we already decrement bonds,
 //so we should not substract them here again, unless I am missing something. This is now resolved: there was a typo in the spec.
-update_voting_power(validator_address, epoch)
+func update_voting_power(validator_address, epoch)
 {
   //compute bonds from total_deltas 
   //COMMENT: if I understand correctly, total_deltas is total_bonded_tokens, including both selfbonded and
@@ -324,7 +307,7 @@ update_voting_power(validator_address, epoch)
 }
 ```
 ```go
-update_total_voting_power(epoch)
+func update_total_voting_power(epoch)
 {
   var total = 0
   forall (validator in validator_sets[epoch].active U validator_sets[epoch].inactive) do
@@ -335,7 +318,7 @@ update_total_voting_power(epoch)
 ```go
 //COMMENT: is there any way to break ties? Let's say an inactive validator increases its voting power such that
 //it matches min_active.voting power. Who does make it to the active set?
-update_validator_sets(validator_address, epoch, power_before, power_after)
+func update_validator_sets(validator_address, epoch, power_before, power_after)
 {
   var min_active = first(validator_sets[epoch].active)
   var max_inactive = last(validator_sets[epoch].inactive)
@@ -368,15 +351,15 @@ update_validator_sets(validator_address, epoch, power_before, power_after)
 ## Auxiliary functions
 
 ```go
-read_epoched_field(field, upper_epoch){
-  var assigned_epochs = {epoch | total_deltas[epoch] != ⊥ && epoch <= upper_epoch}
+func read_epoched_field(field, upper_epoch){
+  var assigned_epochs = {epoch | field[epoch] != ⊥ && epoch <= upper_epoch}
   if (assigned_epochs is empty) then return ⊥
   else return field[max{assigned_epochs}]
 }
 ```
 
 ```go
-total_deltas_at(total_deltas, upper_epoch){
+func total_deltas_at(total_deltas, upper_epoch){
   var assigned_epochs = {epoch | total_deltas[epoch] != -1 && epoch <= upper_epoch}
   if (assigned_epochs is empty) then return 0
   else return total_deltas[max{assigned_epochs}]
@@ -384,12 +367,14 @@ total_deltas_at(total_deltas, upper_epoch){
 ```
 
 ```go
-//There is no epoch upper-bound because the highest epoch must be cur_epoch+offset, and those must be considered.
-compute_total_from_deltas(deltas)
+//I have added epoch to the function, I think it is simple.
+func compute_total_from_deltas(deltas, upper_epoch)
 {
+  var epoch = 0
   var sum = 0
-  forall(delta in deltas){
-    sum += delta.amount
+  while (epoch <= upper_epoch)
+    sum += delta[epoch]
+    epoch++
   }
   return sum
 }
@@ -401,8 +386,10 @@ compute_total_from_deltas(deltas)
 
 These are derived from the check on the accumulators that the PoS validity predicate does.
 
-* We use `validators[validator].total_deltas[epoch]` when we mean 
-`total_deltas_at(validators[validator].total_deltas, epoch)`. We do the same with deltas.
+Following, some simplifications on the notation and functions that we use in the invariants.
+
+* To avoid convoluted notation, we avoid using functions such as read_epoched_field, total_deltas_at and compute_total_from_deltas to lookup epoched data. Thus, for instance when we write `validators[validator].total_deltas[epoch]`, we really mean `total_deltas_at(validators[validator].total_deltas, epoch)`. Similarly, when we write bonds[address][validator].deltas[epoch], we really mean compute_total_from_deltas(bonds[address][validator].deltas, epoch).
+
 * Function `total_bonds(validator, epoch)` aggregates all the bonds of a given validator at a given epoch.
 
 ```go
