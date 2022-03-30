@@ -147,8 +147,6 @@ tx_change_consensus_key(validator_address, consensus_key)
 ```
 ## Delegator transactions
 
-It is essentially a copy and paste of the validator transactions with minor changes. Once we converge on the validator transactions, we can propagate the changes to the delegator transactions.
-
 ```go
 tx_delegate(validator_address, delegator_address, amount)
 {
