@@ -13,7 +13,7 @@ type VotingPower float
 type Validator struct {
   consensus_key map<Epoch, Key>
   state map<Epoch, {inactive, pending, candidate}>
-  total_deltas map<Epoch, amount:int> //amount default value = -1  
+  total_deltas map<Epoch, amount:int>
   voting_power map<Epoch, VotingPower>
   reward_address Addr
 }
@@ -172,6 +172,9 @@ tx_redelegate(src_validator_address, dest_validator_address, delegator_address, 
 ```go
 tx_withdraw_unbonds_delegator(delegator_address)
 {
+  //COMMENT: When a validator withdraws and there are no unbonds, it panics. Shall
+  //we do something similar here? IMO, we should never panic (including in the validator's case),
+  //at the end, if there are no unbonds, the withdraw operation is a noop--nothing wrong with that. 
   forall (validator_address in validators) do
     withdraw(validator_address, delegator_address)
 }
@@ -358,9 +361,9 @@ func read_epoched_field(field, upper_epoch){
 
 ```go
 func total_deltas_at(total_deltas, upper_epoch){
-  var assigned_epochs = {epoch | total_deltas[epoch] != -1 && epoch <= upper_epoch}
-  if (assigned_epochs is empty) then return 0
-  else return total_deltas[max{assigned_epochs}]
+  var value = read_epoched_field(total_deltas, upper_epoch)
+  if (value == ⊥) then return 0
+  else return value
 }
 ```
 
