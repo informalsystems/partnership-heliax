@@ -360,7 +360,7 @@ func update_validator_sets(validator_address, epoch, power_before, power_after)
 func is_validator(validator_address){
   var epoch = cur_epoch
   while epoch <= cur_epoch+pipeline_length
-    if (read_epoched_field(validators[validator_address].state, epoch) in {pending, candidate}) then return false
+    if (read_epoched_field(validators[validator_address].state, epoch) not in {pending, candidate}) then return false
     epoch++
   return true
 }
