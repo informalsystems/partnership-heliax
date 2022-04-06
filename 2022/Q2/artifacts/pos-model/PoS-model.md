@@ -77,9 +77,8 @@ tx_become_validator(validator_address, consensus_key, staking_reward_address)
   //COMMENT: todo: check there are no consensus_key changes schedule between cur_epoch and the offset. If this necessary though? should
   //not be enough with the state checks?
   //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L515
-  if (read_epoched_field(validators[validator_address].state, cur_epoch) in {⊥, inactive} &&
-      read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {⊥, pending, inactive} &&
-      validator_address != staking_reward_address) then
+  var pre_state = read_epoched_field(validators[validator_address].state, cur_epoch)
+  if (pre_state == ⊥ && validator_address != staking_reward_address) then
     //reward_address is not in the docs/spec validator struct
     validators[validator_address].reward_address = staking_reward_address
     //set status to pending inmediately
@@ -95,7 +94,10 @@ tx_become_validator(validator_address, consensus_key, staking_reward_address)
 tx_deactivate(validator_address)
 {
   //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
-  if (read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {candidate, pending}) then
+  //COMMENT: we cannot think of a scenario in which pre_state_offset is equal pending, but the VP seems
+  //to be conern about it. Did we misunderstand the VP? This also applies to the tx_reactivate transaction
+  var pre_state_offset = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length)
+  if (pre_state_offset in {pending, candidate}) then
     //set status to inactive at n + pipeline_length
     validators[validator_address].state[cur_epoch+pipeline_length] = inactive
 }
@@ -106,8 +108,9 @@ tx_reactivate(validator_address)
 {
   //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L459
   //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
-  if (read_epoched_field(validators[validator_address].state, cur_epoch) == inactive &&
-      read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length) in {pending, inactive}) then
+  var pre_state = read_epoched_field(validators[validator_address].state, cur_epoch)
+  var pre_state_offset = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length)
+  if (pre_state == inactive && pre_state_offset in {pending, inactive}) then
     //set status to pending inmediately
     validators[validator_address].state[cur_epoch] = pending
     //set status to candidate at n + pipeline_length
@@ -131,9 +134,9 @@ tx_unbond(validator_address, amount)
 ```go
 tx_withdraw_unbonds_validator(validator_address)
 {
-  //panic if no self-unbonds
-  var selfunbonds = {<start,end,amount> | amount = unbonds[validator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
-  if (selfunbonds is empty) then panic()
+  //COMMNET: in the docs, the system panics if no self-unbonds. Why? In our view, if a user
+  //attemps to withdraw but has no self-unbounds, the the transaction is a noop. Is there something
+  //wrong about assuming that?
   else withdraw(validator_address, validator_address)
 }
 ```
@@ -188,19 +191,20 @@ tx_withdraw_unbonds_delegator(delegator_address)
 //the only possible values for offset_length are pipeline_length and ubonding_length
 func bond(validator_address, delegator_address, amount, offset_length)
 {
-  //add amount bond to delta at n+offset_length
-  bonds[delegator_address][validator_address].deltas[cur_epoch+offset_length] += amount
-  //debit amount form delegator account and credit it to the PoS account
-  balances[delegator_address] -= amount
-  balances[pos] += amount
-  //compute new total_deltas and write it at n+offset_length
-  var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+offset_length)
-  validators[validator_address].total_deltas[cur_epoch+offset_length] = total + amount
-  //update validator's voting_power, total_voting_power and validator_sets at n+offset_length
-  power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+offset_length)
-  power_after = update_voting_power(validator_address, cur_epoch+offset_length)
-  update_total_voting_power(cur_epoch+offset_length)
-  update_validator_sets(validator_address, cur_epoch+offset_length, power_before, power_after)
+  if is_validator(validator_address) then
+    //add amount bond to delta at n+offset_length
+    bonds[delegator_address][validator_address].deltas[cur_epoch+offset_length] += amount
+    //debit amount form delegator account and credit it to the PoS account
+    balances[delegator_address] -= amount
+    balances[pos] += amount
+    //compute new total_deltas and write it at n+offset_length
+    var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+offset_length)
+    validators[validator_address].total_deltas[cur_epoch+offset_length] = total + amount
+    //update validator's voting_power, total_voting_power and validator_sets at n+offset_length
+    power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+offset_length)
+    power_after = update_voting_power(validator_address, cur_epoch+offset_length)
+    update_total_voting_power(cur_epoch+offset_length)
+    update_validator_sets(validator_address, cur_epoch+offset_length, power_before, power_after)
 }
 ```
 
@@ -349,6 +353,19 @@ func update_validator_sets(validator_address, epoch, power_before, power_after)
       insert(validator_sets[epoch].inactive, <validator_address, power_after>)
 }
 ```
+
+
+```go
+//https://github.com/anoma/anoma/blob/c366704610f1f823fc696815e843f5a4ab3431ea/proof_of_stake/src/lib.rs#L1457
+func is_validator(validator_address){
+  var epoch = cur_epoch
+  while epoch <= cur_epoch+pipeline_length
+    if (read_epoched_field(validators[validator_address].state, epoch) in {pending, candidate}) then return false
+    epoch++
+  return true
+}
+```
+
 ## Auxiliary functions
 
 ```go
