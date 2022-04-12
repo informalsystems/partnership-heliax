@@ -261,7 +261,7 @@ func withdraw(validator_address, delegator_address)
     //COMMENT: is the amount slashed here the same than the one slashed when evidence is found? This is an important point
     var amount_after_slashing = unbond.amount
     forall (slash in slashes[validator_address] s.t. start <= slash.epoch && slash.epoch <= end)
-      amount_after_slashing *= (10000 - slash.rate) / 10000)
+      amount_after_slashing *= unbond.amount * slash.rate
     balance[validator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
     //remove unbond
