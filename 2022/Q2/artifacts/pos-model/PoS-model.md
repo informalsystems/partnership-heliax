@@ -262,7 +262,7 @@ func withdraw(validator_address, delegator_address)
     var amount_after_slashing = unbond.amount
     forall (slash in slashes[validator_address] s.t. start <= slash.epoch && slash.epoch <= end)
       amount_after_slashing *= unbond.amount * slash.rate
-    balance[validator_address] += amount_after_slashing
+    balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
     //remove unbond
     unbonds[delegator_address][validator_address].deltas[(start,end)] = 0
