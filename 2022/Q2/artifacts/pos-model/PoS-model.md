@@ -8,7 +8,7 @@
 type Addr
 type Key
 type Epoch uint
-type VotingPower int
+type VotingPower uint
 
 type Validator struct {
   consensus_key map<Epoch, Key>
@@ -50,11 +50,13 @@ type ValidatorSet struct {
 
 ## Constants
 
+```go
 pipeline_length uint
 unbonding_length uint
 votes_per_token uint
 duplicate_vote_rate float
 ligth_client_attack_rate float
+```
 
 ## Variables
 
