@@ -34,7 +34,7 @@ type Slash struct {
   epoch Epoch
   validator Addr
   block_height int //not used
-  slash_type
+  slash_type {duplicate_vote, ligth_client_attack}
 }
 
 type WeightedValidator struct {
