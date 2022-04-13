@@ -8,11 +8,11 @@
 type Addr
 type Key
 type Epoch uint
-type VotingPower float
+type VotingPower int
 
 type Validator struct {
   consensus_key map<Epoch, Key>
-  state map<Epoch, {inactive, pending, candidate}>
+  state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
   voting_power map<Epoch, VotingPower>
   reward_address Addr
@@ -34,13 +34,12 @@ type Slash struct {
   epoch Epoch
   validator Addr
   block_height int //not used
-  rate float
-  slash_type //not used
+  slash_type
 }
 
 type WeightedValidator struct {
   validator Addr
-  voting_power float
+  voting_power VotingPower
 }
 
 type ValidatorSet struct {
@@ -48,6 +47,14 @@ type ValidatorSet struct {
   inactive orderedset<WeightedValidator>
 }
 ```
+
+## Constants
+
+pipeline_length uint
+unbonding_length uint
+votes_per_token uint
+duplicate_vote_rate float
+ligth_client_attack_rate float
 
 ## Variables
 
@@ -69,20 +76,10 @@ total_voting_power[] in Epoch to VotingPower //map from epoch to voting_power
 ```go
 tx_become_validator(validator_address, consensus_key, staking_reward_address)
 {
-  //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L421
-  //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L459
-  //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
-  //COMMENT: In the code they check not only at cur_epoch but at all epochs between cur_epoch and the offset. Double-check
-  //COMMENT: I do not see in the code where they check that the consensus key is not an old one (this is in the docs).
-  //COMMENT: todo: check there are no consensus_key changes schedule between cur_epoch and the offset. If this necessary though? should
-  //not be enough with the state checks?
-  //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L515
-  var pre_state = read_epoched_field(validators[validator_address].state, cur_epoch)
-  if (pre_state == ⊥ && validator_address != staking_reward_address) then
-    //reward_address is not in the docs/spec validator struct
+  //check that become_validator has not been called before for validator_address
+  var cur_state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length)
+  if (cur_state == ⊥ && validator_address != staking_reward_address) then
     validators[validator_address].reward_address = staking_reward_address
-    //set status to pending inmediately
-    validators[validator_address].state[cur_epoch] = pending
     //set status to candidate and consensus key at n + pipeline_length
     validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
@@ -90,14 +87,10 @@ tx_become_validator(validator_address, consensus_key, staking_reward_address)
 ```
 
 ```go
-//COMMENT: races between become_validate or reactivate and deactivate. deactivate does not write anything inmediately. This is related to the validity predicates
 tx_deactivate(validator_address)
 {
-  //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
-  //COMMENT: we cannot think of a scenario in which pre_state_offset is equal pending, but the VP seems
-  //to be conern about it. Did we misunderstand the VP? This also applies to the tx_reactivate transaction
-  var pre_state_offset = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length)
-  if (pre_state_offset in {pending, candidate}) then
+  var cur_state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length)
+  if (cur_state == candidate) then
     //set status to inactive at n + pipeline_length
     validators[validator_address].state[cur_epoch+pipeline_length] = inactive
 }
@@ -106,13 +99,8 @@ tx_deactivate(validator_address)
 ```go
 tx_reactivate(validator_address)
 {
-  //VP:https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L459
-  //https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L471
-  var pre_state = read_epoched_field(validators[validator_address].state, cur_epoch)
-  var pre_state_offset = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length)
-  if (pre_state == inactive && pre_state_offset in {pending, inactive}) then
-    //set status to pending inmediately
-    validators[validator_address].state[cur_epoch] = pending
+  var cur_state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length)
+  if (cur_state == inactive) then
     //set status to candidate at n + pipeline_length
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
 }
@@ -134,9 +122,11 @@ tx_unbond(validator_address, amount)
 ```go
 tx_withdraw_unbonds_validator(validator_address)
 {
-  //COMMNET: in the docs, the system panics if no self-unbonds. Why? In our view, if a user
-  //attemps to withdraw but has no self-unbounds, the the transaction is a noop. Is there something
-  //wrong about assuming that?
+  /* COMMENT
+  in the docs, the system panics if no self-unbonds. Why? In our view, if a user
+  attemps to withdraw but has no self-unbounds, the the transaction is a noop. Is there something
+  wrong about assuming that? same for tx_withdraw_unbonds_delegator
+  */
   else withdraw(validator_address, validator_address)
 }
 ```
@@ -175,9 +165,6 @@ tx_redelegate(src_validator_address, dest_validator_address, delegator_address, 
 ```go
 tx_withdraw_unbonds_delegator(delegator_address)
 {
-  //COMMENT: When a validator withdraws and there are no unbonds, it panics. Shall
-  //we do something similar here? IMO, we should never panic (including in the validator's case),
-  //at the end, if there are no unbonds, the withdraw operation is a noop--nothing wrong with that. 
   forall (validator_address in validators) do
     withdraw(validator_address, delegator_address)
 }
@@ -191,7 +178,7 @@ tx_withdraw_unbonds_delegator(delegator_address)
 //the only possible values for offset_length are pipeline_length and ubonding_length
 func bond(validator_address, delegator_address, amount, offset_length)
 {
-  if is_validator(validator_address) then
+  if is_validator(validator_address, cur_epoch+offset_length) then
     //add amount bond to delta at n+offset_length
     bonds[delegator_address][validator_address].deltas[cur_epoch+offset_length] += amount
     //debit amount form delegator account and credit it to the PoS account
@@ -209,21 +196,26 @@ func bond(validator_address, delegator_address, amount, offset_length)
 ```
 
 ```go
+/* COMMENT
+  two issues with the current form:
+  - https://github.com/informalsystems/partnership-heliax/issues/6 (intended)
+    delbonds and epoch_counter are considered from the unbonding_length offset.
+    This could lead to scenarios in which one starts unbonding before a bond is materialized.
+    Fursthermore, there cannot be positive bonds beyond cur_epoch + pipeline_length, so it does not
+    make sense for delbonds.
+  - https://github.com/informalsystems/partnership-heliax/issues/7 (unresolved)
+    there is a problem with unbonding, slashing and total_deltas becoming negative
+*/
 //This function is called by transactions tx_unbond, tx_undelegate and tx_redelegate
 func unbond(validator_address, delegator_address, amount)
 {
   //compute total bonds from delegator to validator
-  //COMMENT: it computes deltas up to cur_epoch + unbonding_length, is this correct? This is like that to match from where 
-  //the model starts decrementing bonds.
   var delbonds = compute_total_from_deltas(bonds[delegator_address][validator_address].deltas, cur_epoch + unbonding_length)
   //check if there are enough bonds
   //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
   if (delbonds < amount) then panic()
   //Decrement bond deltas and create unbonds
   var remain = amount
-  //COMMENT: Why initializing epoch_counter to cur_epoch + unbonding_length + 1? First there cannot be positive bonds beyond
-  //cur_epoch + pipeline_length. Second, this could lead to scenarios in which one starts unbonding before a bond is materialized.
-  //See: https://github.com/informalsystems/partnership-heliax/issues/6
   var epoch_counter = cur_epoch + unbonding_length + 1
   while remain > 0 do
     epoch_counter = max{epoch | bonds[delegator_address][validator_address].deltas[epoch] > 0 && epoch < epoch_counter}
@@ -232,15 +224,9 @@ func unbond(validator_address, delegator_address, amount)
     else var unbond_amount = bond
     unbonds[delegator_address][validator_address].deltas[(epoch_counter,cur_epoch+unbonding_length)] += unbond_amount
     remain -= unbond_amount
-  //COMMENT: still unsure about this. Now it only creates a single bond record at cur_epoch+unbonding_length.
   bonds[delegator_address][validator_address].deltas[cur_epoch+unbonding_length] -= amount
   //compute new total_deltas and write it at n+unbonding_length
   var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+unbonding_length)
-  //COMMENT: invariant: given an epoch e, validators[validator_address].total_deltas[e] >= bonds[delegator_address][validator_address].deltas 
-  // This is beacuse total_deltas includes selfbonds and delegated-bonds. Needs to be proved.
-  //COMMENT: thinking more about this issue, maybe that's not true due to slashing! So there might be a problem here as total-deltas may go
-  //below 0.
-  //See: https://github.com/informalsystems/partnership-heliax/issues/7
   validators[validator_address].total_deltas[cur_epoch+unbonding_length] = total - amount
   //update validator's voting_power, total_voting_power and validator_sets at n+unbonding_length
   power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+unbonding_length)
@@ -258,30 +244,24 @@ func withdraw(validator_address, delegator_address)
   var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
   //substract any pending slash before withdrawing
   forall (<start,end,amount> in selfunbonds) do
-    //COMMENT: is the amount slashed here the same than the one slashed when evidence is found? This is an important point
     var amount_after_slashing = amount
     forall (slash in slashes[validator_address] s.t. start <= slash.epoch && slash.epoch <= end)
-      amount_after_slashing += amount * slash.rate
+      amount_after_slashing += amount*slash_rate(slash.type)
     balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
     //remove unbond
     unbonds[delegator_address][validator_address].deltas[(start,end)] = 0
-    //COMMENT: the documentation says to "burn" slashed tokens. I guess this means moving them to the slash pool
-    //Anyway, this is not model, as currently those tokens never leave the slash pool.
 }
 ```
 
 ```go
 //assuming evidence is of type Slash for simplicity
-//COMMENT:can total_deltas go below zero due to slashing?
-//Check https://github.com/informalsystems/partnership-heliax/pull/4#discussion_r833447459
 func new_evidence(evidence){
   append(slashes[evidence.validator], evidence)
   //COMMENT: how to compute the slashed rate when there is no cubic slashing? now using evidence.slash_rate
-  //COMMENT: the salshed amount is computed from total deltas up to evidence.epoch and its deducted at n+pipeline_length. Not saying this is a problem, but it is something to discuss
   //compute slash amount
   var total_evidence = total_deltas_at(validators[evidence.validator].total_deltas, evidence.epoch)
-  var slashed_amount = total_evidence*evidence.rate
+  var slashed_amount = total_evidence*slash_rate(evidence.type)
   //compute new total_deltas and write it at n+pipeline_length
   var total_offset = total_deltas_at(validators[evidence.validator].total_deltas, cur_epoch+pipeline_length)
   validators[evidence.validator].total_deltas[cur_epoch+pipeline_length] = total_offset - slashed_amount 
@@ -294,15 +274,13 @@ func new_evidence(evidence){
 ```
 
 ```go
-//COMMENT: shall we do updates to this state to happen once at the end of an epoch? This has been discussed.
-//Tomas agreed is interesting, but they are not doing it rigth know.
-//COMMENT: still unclear from the docs. Why are unbonds substracted? When creating unbonds, we already decrement bonds,
-//so we should not substract them here again, unless I am missing something. This is now resolved: there was a typo in the spec.
+/* COMMENT
+shall we do updates to this state to happen once at the end of an epoch? This has been discussed.
+Tomas agreed is interesting, but they are not doing it rigth know.
+*/
 func update_voting_power(validator_address, epoch)
 {
   //compute bonds from total_deltas 
-  //COMMENT: if I understand correctly, total_deltas is total_bonded_tokens, including both selfbonded and
-  //delegated_bonds. This has been confirmed by Tomas.
   var bonds = total_deltas_at(validators[validator_address].total_deltas, epoch)
   //compute the new voting power
   var power_after = votes_per_token*bonds
@@ -317,12 +295,14 @@ func update_total_voting_power(epoch)
   var total = 0
   forall (validator in validator_sets[epoch].active U validator_sets[epoch].inactive) do
     total += validator.voting_power
-  total_voting_power[cur_epoch+unbonding_length] = total
+  total_voting_power[epoch] = total
 }
 ```
 ```go
-//COMMENT: is there any way to break ties? Let's say an inactive validator increases its voting power such that
-//it matches min_active.voting power. Who does make it to the active set?
+/* COMMENT
+is there any way to break ties? Let's say an inactive validator increases its voting power such that
+it matches min_active.voting power. Who does make it to the active set?
+*/
 func update_validator_sets(validator_address, epoch, power_before, power_after)
 {
   var min_active = first(validator_sets[epoch].active)
@@ -356,13 +336,20 @@ func update_validator_sets(validator_address, epoch, power_before, power_after)
 
 
 ```go
-//https://github.com/anoma/anoma/blob/c366704610f1f823fc696815e843f5a4ab3431ea/proof_of_stake/src/lib.rs#L1457
-func is_validator(validator_address){
-  var epoch = cur_epoch
-  while epoch <= cur_epoch+pipeline_length
-    if (read_epoched_field(validators[validator_address].state, epoch) not in {pending, candidate}) then return false
-    epoch++
-  return true
+/* COMMENT
+only checking at the offset. Could this be problematic?
+*/
+func is_validator(validator_address, epoch){
+    return read_epoched_field(validators[validator_address].state, epoch) == candidate
+}
+```
+
+```go
+func slash_rate(type){
+  switch type
+    case duplicate_vote: return duplicate_vote_rate
+    case ligth_client_attack: return ligth_client_attack_rate
+    default: return 0 //panic maybe?
 }
 ```
 
@@ -385,7 +372,7 @@ func total_deltas_at(total_deltas, upper_epoch){
 ```
 
 ```go
-//I have added epoch to the function, I think it is simple.
+//I have added epoch to the function, I think it is simpler.
 func compute_total_from_deltas(deltas, upper_epoch)
 {
   var epoch = 0
