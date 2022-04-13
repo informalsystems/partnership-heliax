@@ -259,10 +259,10 @@ func withdraw(validator_address, delegator_address)
   //substract any pending slash before withdrawing
   forall (<start,end,amount> in selfunbonds) do
     //COMMENT: is the amount slashed here the same than the one slashed when evidence is found? This is an important point
-    var amount_after_slashing = unbond.amount
+    var amount_after_slashing = amount
     forall (slash in slashes[validator_address] s.t. start <= slash.epoch && slash.epoch <= end)
-      amount_after_slashing *= (10000 - slash.rate) / 10000)
-    balance[validator_address] += amount_after_slashing
+      amount_after_slashing += amount * slash.rate
+    balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
     //remove unbond
     unbonds[delegator_address][validator_address].deltas[(start,end)] = 0
