@@ -79,8 +79,8 @@ total_voting_power[] in Epoch to VotingPower //map from epoch to voting_power
 tx_become_validator(validator_address, consensus_key, staking_reward_address)
 {
   //check that become_validator has not been called before for validator_address
-  var cur_state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length)
-  if (cur_state == ⊥ && validator_address != staking_reward_address) then
+  var state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length, ⊥)
+  if (state == ⊥ && validator_address != staking_reward_address) then
     validators[validator_address].reward_address = staking_reward_address
     //set status to candidate and consensus key at n + pipeline_length
     validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
@@ -89,10 +89,14 @@ tx_become_validator(validator_address, consensus_key, staking_reward_address)
 ```
 
 ```go
+/* COMMENT
+  - https://github.com/informalsystems/partnership-heliax/issues/10
+    issue regarding bonds and deactivation
+*/
 tx_deactivate(validator_address)
 {
-  var cur_state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length)
-  if (cur_state == candidate) then
+  var state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length, ⊥)
+  if (state == candidate) then
     //set status to inactive at n + pipeline_length
     validators[validator_address].state[cur_epoch+pipeline_length] = inactive
 }
@@ -101,8 +105,8 @@ tx_deactivate(validator_address)
 ```go
 tx_reactivate(validator_address)
 {
-  var cur_state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length)
-  if (cur_state == inactive) then
+  var state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length, ⊥)
+  if (state == inactive) then
     //set status to candidate at n + pipeline_length
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
 }
@@ -152,7 +156,7 @@ tx_delegate(validator_address, delegator_address, amount)
 ```go
 tx_undelegate(validator_address, delegator_address, amount)
 {
-  unbond(src_validator_address, delegator_address, amount)
+  unbond(validator_address, delegator_address, amount)
 }
 ```
 
@@ -177,20 +181,20 @@ tx_withdraw_unbonds_delegator(delegator_address)
 
 ```go
 //This function is called by transactions tx_self_bond, tx_delegate and tx_redelegate
-//the only possible values for offset_length are pipeline_length and ubonding_length
+//the only possible values for offset_length are pipeline_length and unbonding_length
 func bond(validator_address, delegator_address, amount, offset_length)
 {
   if is_validator(validator_address, cur_epoch+offset_length) then
     //add amount bond to delta at n+offset_length
     bonds[delegator_address][validator_address].deltas[cur_epoch+offset_length] += amount
-    //debit amount form delegator account and credit it to the PoS account
+    //debit amount from delegator account and credit it to the PoS account
     balances[delegator_address] -= amount
     balances[pos] += amount
     //compute new total_deltas and write it at n+offset_length
-    var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+offset_length)
+    var total = read_epoched_field(validators[validator_address].total_deltas, cur_epoch+offset_length, 0)
     validators[validator_address].total_deltas[cur_epoch+offset_length] = total + amount
     //update validator's voting_power, total_voting_power and validator_sets at n+offset_length
-    power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+offset_length)
+    power_before = read_epoched_field(validators[validator_address].voting_power, cur_epoch+offset_length, 0)
     power_after = update_voting_power(validator_address, cur_epoch+offset_length)
     update_total_voting_power(cur_epoch+offset_length)
     update_validator_sets(validator_address, cur_epoch+offset_length, power_before, power_after)
@@ -199,11 +203,11 @@ func bond(validator_address, delegator_address, amount, offset_length)
 
 ```go
 /* COMMENT
-  two issues with the current form:
+  two issues:
   - https://github.com/informalsystems/partnership-heliax/issues/6 (intended)
     delbonds and epoch_counter are considered from the unbonding_length offset.
     This could lead to scenarios in which one starts unbonding before a bond is materialized.
-    Fursthermore, there cannot be positive bonds beyond cur_epoch + pipeline_length, so it does not
+    Furthermore, there cannot be positive bonds beyond cur_epoch + pipeline_length, so it does not
     make sense for delbonds.
   - https://github.com/informalsystems/partnership-heliax/issues/7 (unresolved)
     there is a problem with unbonding, slashing and total_deltas becoming negative
@@ -215,26 +219,26 @@ func unbond(validator_address, delegator_address, amount)
   var delbonds = compute_total_from_deltas(bonds[delegator_address][validator_address].deltas, cur_epoch + unbonding_length)
   //check if there are enough bonds
   //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
-  if (delbonds < amount) then panic()
-  //Decrement bond deltas and create unbonds
-  var remain = amount
-  var epoch_counter = cur_epoch + unbonding_length + 1
-  while remain > 0 do
-    epoch_counter = max{epoch | bonds[delegator_address][validator_address].deltas[epoch] > 0 && epoch < epoch_counter}
-    var bond = bonds[delegator_address][validator_address].deltas[epoch_counter]
-    if bond > remain then var unbond_amount = remain
-    else var unbond_amount = bond
-    unbonds[delegator_address][validator_address].deltas[(epoch_counter,cur_epoch+unbonding_length)] += unbond_amount
-    remain -= unbond_amount
-  bonds[delegator_address][validator_address].deltas[cur_epoch+unbonding_length] -= amount
-  //compute new total_deltas and write it at n+unbonding_length
-  var total = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+unbonding_length)
-  validators[validator_address].total_deltas[cur_epoch+unbonding_length] = total - amount
-  //update validator's voting_power, total_voting_power and validator_sets at n+unbonding_length
-  power_before = total_deltas_at(validators[validator_address].voting_power, cur_epoch+unbonding_length)
-  power_after = update_voting_power(validator_address, cur_epoch+unbonding_length)
-  update_total_voting_power(cur_epoch+unbonding_length)
-  update_validator_sets(validator_address, cur_epoch+unbonding_length, power_before, power_after)
+  if (delbonds >= amount) then
+    //Decrement bond deltas and create unbonds
+    var remain = amount
+    var epoch_counter = cur_epoch + unbonding_length + 1
+    while remain > 0 do
+      epoch_counter = max{epoch | bonds[delegator_address][validator_address].deltas[epoch] > 0 && epoch < epoch_counter}
+      var bond = bonds[delegator_address][validator_address].deltas[epoch_counter]
+      if bond > remain then var unbond_amount = remain
+      else var unbond_amount = bond
+      unbonds[delegator_address][validator_address].deltas[(epoch_counter,cur_epoch+unbonding_length)] += unbond_amount
+      remain -= unbond_amount
+    bonds[delegator_address][validator_address].deltas[cur_epoch+unbonding_length] -= amount
+    //compute new total_deltas and write it at n+unbonding_length
+    var total = read_epoched_field(validators[validator_address].total_deltas, cur_epoch+unbonding_length, 0)
+    validators[validator_address].total_deltas[cur_epoch+unbonding_length] = total - amount
+    //update validator's voting_power, total_voting_power and validator_sets at n+unbonding_length
+    power_before = read_epoched_field(validators[validator_address].voting_power, cur_epoch+unbonding_length, 0)
+    power_after = update_voting_power(validator_address, cur_epoch+unbonding_length)
+    update_total_voting_power(cur_epoch+unbonding_length)
+    update_validator_sets(validator_address, cur_epoch+unbonding_length, power_before, power_after)
 }
 ```
 
@@ -262,13 +266,13 @@ func new_evidence(evidence){
   append(slashes[evidence.validator], evidence)
   //COMMENT: how to compute the slashed rate when there is no cubic slashing? now using evidence.slash_rate
   //compute slash amount
-  var total_evidence = total_deltas_at(validators[evidence.validator].total_deltas, evidence.epoch)
+  var total_evidence = read_epoched_field(validators[evidence.validator].total_deltas, evidence.epoch, 0)
   var slashed_amount = total_evidence*slash_rate(evidence.type)
   //compute new total_deltas and write it at n+pipeline_length
-  var total_offset = total_deltas_at(validators[evidence.validator].total_deltas, cur_epoch+pipeline_length)
+  var total_offset = read_epoched_field(validators[evidence.validator].total_deltas, cur_epoch+pipeline_length, 0)
   validators[evidence.validator].total_deltas[cur_epoch+pipeline_length] = total_offset - slashed_amount 
   //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
-  power_before = total_deltas_at(validators[validator_address].total_deltas, cur_epoch+pipeline_length)
+  power_before = read_epoched_field(validators[evidence.validator].voting_power, cur_epoch+pipeline_length, 0)
   power_after = update_voting_power(evidence.validator, cur_epoch+pipeline_length)
   update_total_voting_power(cur_epoch+pipeline_length)
   update_validator_sets(evidence.validator, cur_epoch+pipeline_length, power_before, power_after)
@@ -276,14 +280,10 @@ func new_evidence(evidence){
 ```
 
 ```go
-/* COMMENT
-shall we do updates to this state to happen once at the end of an epoch? This has been discussed.
-Tomas agreed is interesting, but they are not doing it rigth know.
-*/
 func update_voting_power(validator_address, epoch)
 {
   //compute bonds from total_deltas 
-  var bonds = total_deltas_at(validators[validator_address].total_deltas, epoch)
+  var bonds = read_epoched_field(validators[validator_address].total_deltas, epoc, 0)
   //compute the new voting power
   var power_after = votes_per_token*bonds
   //update voting power and return it
@@ -342,7 +342,7 @@ func update_validator_sets(validator_address, epoch, power_before, power_after)
 only checking at the offset. Could this be problematic?
 */
 func is_validator(validator_address, epoch){
-    return read_epoched_field(validators[validator_address].state, epoch) == candidate
+    return read_epoched_field(validators[validator_address].state, epoch, ⊥) == candidate
 }
 ```
 
@@ -358,18 +358,10 @@ func slash_rate(type){
 ## Auxiliary functions
 
 ```go
-func read_epoched_field(field, upper_epoch){
+func read_epoched_field(field, upper_epoch, bottom){
   var assigned_epochs = {epoch | field[epoch] != ⊥ && epoch <= upper_epoch}
-  if (assigned_epochs is empty) then return ⊥
+  if (assigned_epochs is empty) then return bottom
   else return field[max{assigned_epochs}]
-}
-```
-
-```go
-func total_deltas_at(total_deltas, upper_epoch){
-  var value = read_epoched_field(total_deltas, upper_epoch)
-  if (value == ⊥) then return 0
-  else return value
 }
 ```
 
