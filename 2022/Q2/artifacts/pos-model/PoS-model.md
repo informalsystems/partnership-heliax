@@ -91,7 +91,8 @@ tx_become_validator(validator_address, consensus_key, staking_reward_address)
 ```go
 /* COMMENT
   - https://github.com/informalsystems/partnership-heliax/issues/10
-    issue regarding bonds and deactivation
+    issue about bonds and deactivation
+    conclusion: leave it as it is for the moment.
 */
 tx_deactivate(validator_address)
 {
@@ -128,12 +129,7 @@ tx_unbond(validator_address, amount)
 ```go
 tx_withdraw_unbonds_validator(validator_address)
 {
-  /* COMMENT
-  in the docs, the system panics if no self-unbonds. Why? In our view, if a user
-  attemps to withdraw but has no self-unbounds, the the transaction is a noop. Is there something
-  wrong about assuming that? same for tx_withdraw_unbonds_delegator
-  */
-  else withdraw(validator_address, validator_address)
+  withdraw(validator_address, validator_address)
 }
 ```
 
@@ -204,13 +200,15 @@ func bond(validator_address, delegator_address, amount, offset_length)
 ```go
 /* COMMENT
   two issues:
-  - https://github.com/informalsystems/partnership-heliax/issues/6 (intended)
+  - https://github.com/informalsystems/partnership-heliax/issues/6
     delbonds and epoch_counter are considered from the unbonding_length offset.
     This could lead to scenarios in which one starts unbonding before a bond is materialized.
     Furthermore, there cannot be positive bonds beyond cur_epoch + pipeline_length, so it does not
     make sense for delbonds.
-  - https://github.com/informalsystems/partnership-heliax/issues/7 (unresolved)
+    conclusion: intended
+  - https://github.com/informalsystems/partnership-heliax/issues/7
     there is a problem with unbonding, slashing and total_deltas becoming negative
+    conclusion: it is an actual issue, unresolved
 */
 //This function is called by transactions tx_unbond, tx_undelegate and tx_redelegate
 func unbond(validator_address, delegator_address, amount)
@@ -246,7 +244,6 @@ func unbond(validator_address, delegator_address, amount)
 //This function is called by transactions tx_withdraw_unbonds_validator and tx_withdraw_unbonds_delegator
 func withdraw(validator_address, delegator_address)
 {
-  //COMMENT: check that the epoch check is done on unbond.end and not somehting else. In docs says unbond.epoch, which is unclear
   var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
   //substract any pending slash before withdrawing
   forall (<start,end,amount> in selfunbonds) do
@@ -264,7 +261,6 @@ func withdraw(validator_address, delegator_address)
 //assuming evidence is of type Slash for simplicity
 func new_evidence(evidence){
   append(slashes[evidence.validator], evidence)
-  //COMMENT: how to compute the slashed rate when there is no cubic slashing? now using evidence.slash_rate
   //compute slash amount
   var total_evidence = read_epoched_field(validators[evidence.validator].total_deltas, evidence.epoch, 0)
   var slashed_amount = total_evidence*slash_rate(evidence.type)
@@ -301,10 +297,6 @@ func update_total_voting_power(epoch)
 }
 ```
 ```go
-/* COMMENT
-is there any way to break ties? Let's say an inactive validator increases its voting power such that
-it matches min_active.voting power. Who does make it to the active set?
-*/
 func update_validator_sets(validator_address, epoch, power_before, power_after)
 {
   var min_active = first(validator_sets[epoch].active)
@@ -338,9 +330,6 @@ func update_validator_sets(validator_address, epoch, power_before, power_after)
 
 
 ```go
-/* COMMENT
-only checking at the offset. Could this be problematic?
-*/
 func is_validator(validator_address, epoch){
     return read_epoched_field(validators[validator_address].state, epoch, ⊥) == candidate
 }
@@ -366,7 +355,6 @@ func read_epoched_field(field, upper_epoch, bottom){
 ```
 
 ```go
-//I have added epoch to the function, I think it is simpler.
 func compute_total_from_deltas(deltas, upper_epoch)
 {
   var epoch = 0
