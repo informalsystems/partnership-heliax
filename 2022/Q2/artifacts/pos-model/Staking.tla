@@ -32,7 +32,7 @@ VARIABLES
     \* @type: BALANCE;
     delegated
 
-\* Variables that model transactions, not the state machine.
+\* Variables that model transactions, epochs and offsets, not the state machine.
 VARIABLES    
     \* The last executed transaction.
     \*
@@ -41,7 +41,7 @@ VARIABLES
     \* A serial number to assign unique ids to transactions
     \* @type: Int;
     nextTxId,
-    \* Counts the transaactions executed within an epoch
+    \* Counts the transactions executed within an epoch
     \* @type: Int;
     txCounter,
     \* A serial number used to identify epochs
@@ -68,7 +68,6 @@ Validator == "validator"
 
 \* Initialize the balances
 Init ==
-    \* user{1,2,3} have 1M Cosmos coins, the validator has 1M - stake
     /\ balanceOf = [ a \in UserAddrs |->
         IF a /= "validator"
         THEN INITIAL_SUPPLY
@@ -133,7 +132,7 @@ Unbond(sender, amount) ==
 Withdraw(sender) ==
     LET fail ==
         \/ sender = Validator
-        \/ unbonded[sender] > 0
+        \/ unbonded[sender] <= 0
     IN
     /\ lastTx' = [ id |-> nextTxId, tag |-> "withdraw", fail |-> fail,
                    sender |-> sender, toAddr |-> Validator, value |-> unbonded[sender] ]
