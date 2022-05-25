@@ -16,7 +16,13 @@ EXTENDS Integers, Apalache, Staking_typedefs
 CONSTANTS
     \* Set of all addresses on Cosmos.
     \* @type: Set(ADDR);
-    UserAddrs
+    UserAddrs,
+
+    \* @type: Int;
+    PipelineLength,
+
+    \* @type: Int;
+    UnbondingLength
 
 VARIABLES
     \* Coin balance for every Cosmos account.
@@ -25,11 +31,11 @@ VARIABLES
     balanceOf,
     \* Balance of unbonded coins that cannot be used during the bonding period.
     \*
-    \* @type: BALANCE;
+    \* @type: EPOCHED;
     unbonded,
     \* Coins that are delegated to Validator.
     \*
-    \* @type: BALANCE;
+    \* @type: EPOCHED;
     delegated
 
 \* Variables that model transactions, epochs and offsets, not the state machine.
@@ -73,9 +79,9 @@ Init ==
         THEN INITIAL_SUPPLY
         ELSE INITIAL_SUPPLY - INIT_VALIDATOR_STAKE
        ]
-    /\ unbonded = [ a \in UserAddrs |-> 0 ]
-    /\ delegated = [
-        a \in UserAddrs |-> IF a /= "validator"
+    /\ unbonded = [ n \in 1..UnbondingLength, a \in UserAddrs |-> 0 ]
+    /\ delegated = [ n \in 1..PipelineLength, a \in UserAddrs |->
+        IF a /= "validator"
         THEN 0
         ELSE INIT_VALIDATOR_STAKE
        ]
@@ -95,16 +101,17 @@ Delegate(sender, amount) ==
     /\ lastTx' = [ id |-> nextTxId, tag |-> "delegate", fail |-> fail,
                    sender |-> sender, toAddr |-> Validator, value |-> amount ]
     /\ nextTxId' = nextTxId + 1
+    /\ txCounter' = txCounter + 1
     /\ failed' = (fail \/ failed)
+    /\ UNCHANGED epoch
     /\  IF fail
         THEN
           UNCHANGED <<balanceOf, unbonded, delegated>>
         ELSE
           \* transaction succeeds
           \* update the balance of 'sender'
-          /\ balanceOf' =
-                [ balanceOf EXCEPT ![sender] = @ - amount]
-          /\ delegated' = [ delegated EXCEPT ![sender] = @ + amount ]
+          /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ - amount]
+          /\ delegated' = [ delegated EXCEPT ![PipelineLength, sender] = @ + amount]
           /\ UNCHANGED unbonded
 
 
@@ -113,60 +120,78 @@ Unbond(sender, amount) ==
     LET fail ==
         \/ amount < 0
         \/ sender = Validator
-        \/ amount > delegated[sender]
+        \/ amount > delegated[PipelineLength,sender]
     IN
     /\ lastTx' = [ id |-> nextTxId, tag |-> "unbond", fail |-> fail,
                    sender |-> sender, toAddr |-> Validator, value |-> amount ]
     /\ nextTxId' = nextTxId + 1
+    /\ txCounter' = txCounter + 1
     /\ failed' = (fail \/ failed)
+    /\ UNCHANGED epoch
     /\  IF fail
         THEN
           UNCHANGED <<balanceOf, unbonded, delegated>>
         ELSE
           \* transaction succeeds
-          /\ unbonded' = [ unbonded EXCEPT ![sender] = @ + amount ]
-          /\ delegated' = [ delegated EXCEPT ![sender] = @ - amount ]
+          /\ unbonded' = [ unbonded EXCEPT ![UnbondingLength, sender] = @ + amount ]
+          /\ delegated' = [ delegated EXCEPT ![PipelineLength, sender] = @ - amount ]
           /\ UNCHANGED  balanceOf
 
 \* withdraw unbonded coins
 Withdraw(sender) ==
     LET fail ==
         \/ sender = Validator
-        \/ unbonded[sender] <= 0
+        \/ unbonded[1, sender] <= 0
     IN
     /\ lastTx' = [ id |-> nextTxId, tag |-> "withdraw", fail |-> fail,
-                   sender |-> sender, toAddr |-> Validator, value |-> unbonded[sender] ]
+                   sender |-> sender, toAddr |-> Validator, value |-> unbonded[1, sender] ]
     /\ nextTxId' = nextTxId + 1
+    /\ txCounter' = txCounter + 1
     /\ failed' = (fail \/ failed)
+    /\ UNCHANGED epoch
     /\  IF fail
         THEN
           UNCHANGED <<balanceOf, unbonded, delegated>>
         ELSE
           \* transaction succeeds
-          /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ + unbonded[sender] ]
-          /\ unbonded' = [ unbonded EXCEPT ![sender] = 0 ]
+          /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ + unbonded[1, sender] ]
+          /\ unbonded' = [ n \in 1..UnbondingLength, user \in UserAddrs |-> 
+                          IF user = sender
+                          THEN unbonded[n, sender] - unbonded[1, sender]
+                          ELSE unbonded[n, user]
+                         ]
           /\ UNCHANGED  delegated
 
-AdvanceEpoch ==
-    /\  IF txCounter = TXS_PER_EPOCH
-        THEN
-          \* move to the next epoch
-          /\ epoch' = epoch + 1
-          /\ txCounter' = 0
-        ELSE
-          \* do not advance epoch
-          /\ txCounter' = txCounter + 1
-          /\ UNCHANGED  epoch
+ShiftEpochoedVariables ==
+    /\ unbonded' = [ n \in 1..UnbondingLength, user \in UserAddrs |-> 
+                    IF n < UnbondingLength
+                    THEN unbonded[n+1, user]
+                    ELSE unbonded[n, user]
+                   ]
+    /\ delegated' = [ n \in 1..PipelineLength, user \in UserAddrs |-> 
+                     IF n < PipelineLength
+                     THEN delegated[n+1, user]
+                     ELSE delegated[n, user]
+                    ]
 
-\* The transition relation, which chooses one of the actions
+AdvanceEpoch ==
+    /\ epoch' = epoch + 1
+    /\ txCounter' = 0
+    /\ ShiftEpochoedVariables  
+    /\ UNCHANGED <<balanceOf, lastTx, nextTxId, failed>>
+
 Next ==
-    \/ \E sender \in UserAddrs:
-       \E amount \in Int:
+    IF txCounter = TXS_PER_EPOCH
+    THEN
+      \* move to the next epoch
+      AdvanceEpoch
+    ELSE
+      \E sender \in UserAddrs:
+      \E amount \in Int:
         /\ amount <= MAX_UINT
         /\ \/ Delegate(sender, amount)
            \/ Unbond(sender, amount)
            \/ Withdraw(sender)
-        /\ AdvanceEpoch
 
 \* The transition relation assuming that no failure occurs
 NextNoFail ==

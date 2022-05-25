@@ -7,6 +7,8 @@
 
   @typeAlias: BALANCE = ADDR -> Int;
 
+  @typeAlias: EPOCHED = <<Int, ADDR>> -> Int;
+
   A transaction (a la discriminated union but all fields are packed together):
   @typeAlias: TX = [
     tag: Str,
@@ -19,9 +21,9 @@
 
   A state of the state machine:
   @typeAlias: STATE = [
-    balanceOf: ADDR -> Int,
-    delegated: ADDR -> Int,
-    unbonded: ADDR -> Int,
+    balanceOf: BALANCE,
+    delegated: EPOCHED,
+    unbonded: EPOCHED,
     lastTx: TX,
     nextTxId: Int,
     failed: Bool
