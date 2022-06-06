@@ -180,6 +180,7 @@ tx_withdraw_unbonds_delegator(delegator_address)
 //the only possible values for offset_length are pipeline_length and unbonding_length
 func bond(validator_address, delegator_address, amount, offset_length)
 {
+  //QUESTION: What if we remove this and it is up to the user to be smart bonding its tokens
   if is_validator(validator_address, cur_epoch+offset_length) then
     //add amount bond to delta at n+offset_length
     bonds[delegator_address][validator_address].deltas[cur_epoch+offset_length] += amount

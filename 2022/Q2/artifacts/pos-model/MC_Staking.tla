@@ -58,7 +58,7 @@ NoWithdraw ==
 BalanceAlwaysPositive == 
     \A user \in UserAddrs: balanceOf[user] >= 0
 
-\* takes forever to check this
+\* outdated, also takes forever to check this
 \*UserConstantAmount == 
 \*    \A user \in UserAddrs: balanceOf[user] + unbonded[user] + delegated[user] = INITIAL_SUPPLY
 
