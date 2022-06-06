@@ -100,10 +100,7 @@ Delegate(sender, amount) ==
     IN
     /\ lastTx' = [ id |-> nextTxId, tag |-> "delegate", fail |-> fail,
                    sender |-> sender, toAddr |-> Validator, value |-> amount ]
-    /\ nextTxId' = nextTxId + 1
-    /\ txCounter' = txCounter + 1
     /\ failed' = (fail \/ failed)
-    /\ UNCHANGED epoch
     /\  IF fail
         THEN
           UNCHANGED <<balanceOf, unbonded, delegated>>
@@ -124,10 +121,7 @@ Unbond(sender, amount) ==
     IN
     /\ lastTx' = [ id |-> nextTxId, tag |-> "unbond", fail |-> fail,
                    sender |-> sender, toAddr |-> Validator, value |-> amount ]
-    /\ nextTxId' = nextTxId + 1
-    /\ txCounter' = txCounter + 1
     /\ failed' = (fail \/ failed)
-    /\ UNCHANGED epoch
     /\  IF fail
         THEN
           UNCHANGED <<balanceOf, unbonded, delegated>>
@@ -145,10 +139,7 @@ Withdraw(sender) ==
     IN
     /\ lastTx' = [ id |-> nextTxId, tag |-> "withdraw", fail |-> fail,
                    sender |-> sender, toAddr |-> Validator, value |-> unbonded[1, sender] ]
-    /\ nextTxId' = nextTxId + 1
-    /\ txCounter' = txCounter + 1
     /\ failed' = (fail \/ failed)
-    /\ UNCHANGED epoch
     /\  IF fail
         THEN
           UNCHANGED <<balanceOf, unbonded, delegated>>
@@ -161,6 +152,11 @@ Withdraw(sender) ==
                           ELSE unbonded[n, user]
                          ]
           /\ UNCHANGED  delegated
+
+Common ==
+    /\ nextTxId' = nextTxId + 1
+    /\ txCounter' = txCounter + 1
+    /\ UNCHANGED epoch
 
 ShiftEpochoedVariables ==
     /\ unbonded' = [ n \in 1..UnbondingLength, user \in UserAddrs |-> 
@@ -192,6 +188,7 @@ Next ==
         /\ \/ Delegate(sender, amount)
            \/ Unbond(sender, amount)
            \/ Withdraw(sender)
+        /\ Common
 
 \* The transition relation assuming that no failure occurs
 NextNoFail ==

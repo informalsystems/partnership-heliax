@@ -37,7 +37,7 @@ VARIABLES
     txCounter,
     \* A serial number used to identify epochs
     \* @type: Int;
-    epoch,  
+    epoch,
     \* Whether at least one transaction has failed
     \* @type: Bool;
     failed
