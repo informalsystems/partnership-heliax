@@ -2,8 +2,11 @@
 \* an instance for model checking Staking.tla with Apalache
 EXTENDS Sequences, Staking_typedefs
 
-\* Use the set of three addresses.
-UserAddrs == { "user2", "user3", "validator" }
+\* Use the set of four addresses, including two validators.
+UserAddrs == { "user2", "user3", "val1", "val2"}
+
+\* Set of two validators.
+ValidatorAddrs == {"val1", "val2"}
 
 PipelineLength == 6
 
@@ -21,7 +24,11 @@ VARIABLES
     \* Coins that are delegated to Validator.
     \*
     \* @type: EPOCHED;
-    delegated
+    delegated,
+    \* Voting power of the validator.
+    \*
+    \* @type: EPOCHED;
+    bonded
 
 \* Variables that model transactions, not the state machine.
 VARIABLES    
