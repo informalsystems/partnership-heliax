@@ -5,6 +5,10 @@ EXTENDS Sequences, Staking_typedefs
 \* Use the set of three addresses.
 UserAddrs == { "user2", "user3", "validator" }
 
+PipelineLength == 6
+
+UnbondingLength == 2
+
 VARIABLES
     \* Coin balance for every Cosmos account.
     \*
@@ -12,11 +16,11 @@ VARIABLES
     balanceOf,
     \* Balance of unbonded coins that cannot be used during the bonding period.
     \*
-    \* @type: BALANCE;
+    \* @type: EPOCHED;
     unbonded,
     \* Coins that are delegated to Validator.
     \*
-    \* @type: BALANCE;
+    \* @type: EPOCHED;
     delegated
 
 \* Variables that model transactions, not the state machine.
@@ -28,7 +32,7 @@ VARIABLES
     \* A serial number to assign unique ids to transactions
     \* @type: Int;
     nextTxId,
-    \* Counts the transaactions executed within an epoch
+    \* Counts the transactions executed within an epoch
     \* @type: Int;
     txCounter,
     \* A serial number used to identify epochs
@@ -43,11 +47,19 @@ INSTANCE Staking
 
 \* invariants to check and break the system
 
+\* a counterexample to this invariant will produce ten transactions,
+NoTenTransactions ==
+    nextTxId < 10 \/ failed
+
+\* No withdrawing. Use it to produce a counterexample.
+NoWithdraw ==
+    lastTx.tag /= "withdraw"
+
 BalanceAlwaysPositive == 
     \A user \in UserAddrs: balanceOf[user] >= 0
 
-\* takes forever to check this
-UserConstantAmount == 
-    \A user \in UserAddrs: balanceOf[user] + unbonded[user] + delegated[user] = INITIAL_SUPPLY
+\* outdated, also takes forever to check this
+\*UserConstantAmount == 
+\*    \A user \in UserAddrs: balanceOf[user] + unbonded[user] + delegated[user] = INITIAL_SUPPLY
 
 ===============================================================================
