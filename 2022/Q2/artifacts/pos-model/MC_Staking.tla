@@ -23,7 +23,7 @@ VARIABLES
     unbonded,
     \* Coins that are delegated to Validator.
     \*
-    \* @type: EPOCHED;
+    \* @type: DELEGATEDEPOCHED;
     delegated,
     \* Voting power of the validator.
     \*
@@ -62,11 +62,14 @@ NoTenTransactions ==
 NoWithdraw ==
     lastTx.tag /= "withdraw"
 
+ValDelegatedFold(set, val) == LET SumDelegated(p,q) == p + delegated[1, q, val]
+                              IN ApaFoldSet( SumDelegated, 0, set )
+
+VotingpowerDelagations ==
+    \A val \in ValidatorAddrs:
+    ValDelegatedFold(UserAddrs, val) = bonded[1, val]
+
 BalanceAlwaysPositive == 
     \A user \in UserAddrs: balanceOf[user] >= 0
-
-\* outdated, also takes forever to check this
-\*UserConstantAmount == 
-\*    \A user \in UserAddrs: balanceOf[user] + unbonded[user] + delegated[user] = INITIAL_SUPPLY
 
 ===============================================================================

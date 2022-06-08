@@ -40,7 +40,7 @@ VARIABLES
     unbonded,
     \* Token that are delegated to Validator.
     \*
-    \* @type: EPOCHED;
+    \* @type: DELEGATEDEPOCHED;
     delegated,
     \* Tokens bonded at a given Validator.
     \*
@@ -90,8 +90,8 @@ Init ==
         ELSE INITIAL_SUPPLY
        ]
     /\ unbonded = [ n \in 1..UnbondingLength, a \in UserAddrs |-> 0 ]
-    /\ delegated = [ n \in 1..UnbondingLength, a \in UserAddrs |->
-        IF a \in ValidatorAddrs
+    /\ delegated = [ n \in 1..UnbondingLength, a \in UserAddrs, b \in ValidatorAddrs |->
+        IF a \in ValidatorAddrs /\ a = b
         THEN INIT_VALIDATOR_STAKE
         ELSE 0
        ]
@@ -119,10 +119,10 @@ Delegate(sender, validator, amount) ==
           \* transaction succeeds
           \* update the balance of 'sender'
           /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ - amount]
-          /\ delegated' = [ n \in 1..UnbondingLength, user \in UserAddrs |-> 
-                     IF n >= PipelineLength /\ user = sender
-                     THEN delegated[n, user] + amount
-                     ELSE delegated[n, user]
+          /\ delegated' = [ n \in 1..UnbondingLength, user \in UserAddrs, val \in ValidatorAddrs |-> 
+                     IF n >= PipelineLength /\ user = sender /\ val = validator
+                     THEN delegated[n, user, val] + amount
+                     ELSE delegated[n, user, val]
                     ]
           /\ bonded' = [ n \in 1..UnbondingLength, user \in ValidatorAddrs |-> 
                      IF n >= PipelineLength /\ user = sender
@@ -136,7 +136,7 @@ Delegate(sender, validator, amount) ==
 Unbond(sender, validator, amount) ==
     LET fail ==
         \/ amount < 0
-        \/ amount > delegated[PipelineLength,sender]
+        \/ amount > delegated[UnbondingLength, sender, validator]
     IN
     /\ lastTx' = [ id |-> nextTxId, tag |-> "unbond", fail |-> fail,
                    sender |-> sender, toAddr |-> validator, value |-> amount ]
@@ -147,7 +147,7 @@ Unbond(sender, validator, amount) ==
         ELSE
           \* transaction succeeds
           /\ unbonded' = [ unbonded EXCEPT ![UnbondingLength, sender] = @ + amount ]
-          /\ delegated' = [ delegated EXCEPT ![UnbondingLength, sender] = @ - amount ]
+          /\ delegated' = [ delegated EXCEPT ![UnbondingLength, sender, validator] = @ - amount ]
           /\ bonded' = [ bonded EXCEPT ![UnbondingLength, validator] = @ - amount]
           /\ UNCHANGED  balanceOf
           
@@ -184,10 +184,10 @@ ShiftEpochoedVariables ==
                     THEN unbonded[n+1, user]
                     ELSE unbonded[n, user]
                    ]
-    /\ delegated' = [ n \in 1..UnbondingLength, user \in UserAddrs |-> 
+    /\ delegated' = [ n \in 1..UnbondingLength, user \in UserAddrs, val \in ValidatorAddrs|-> 
                      IF n < UnbondingLength
-                     THEN delegated[n+1, user]
-                     ELSE delegated[n, user]
+                     THEN delegated[n+1, user, val]
+                     ELSE delegated[n, user, val]
                     ]
     /\ bonded' = [ n \in 1..UnbondingLength, user \in ValidatorAddrs |-> 
                   IF n < UnbondingLength
