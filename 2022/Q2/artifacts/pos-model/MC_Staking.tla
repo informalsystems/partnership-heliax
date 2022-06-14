@@ -8,9 +8,9 @@ UserAddrs == { "user2", "user3", "val1", "val2"}
 \* Set of two validators.
 ValidatorAddrs == {"val1", "val2"}
 
-PipelineLength == 6
+PipelineLength == 2
 
-UnbondingLength == 2
+UnbondingLength == 6
 
 VARIABLES
     \* Coin balance for every Cosmos account.

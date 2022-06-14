@@ -38,11 +38,11 @@ VARIABLES
     \*
     \* @type: EPOCHED;
     unbonded,
-    \* Token that are delegated to Validator.
+    \* Token that are delegated to a validator.
     \*
     \* @type: DELEGATEDEPOCHED;
     delegated,
-    \* Tokens bonded at a given Validator.
+    \* Tokens bonded at a given validator.
     \*
     \* @type: EPOCHED;
     bonded
@@ -70,7 +70,7 @@ VARIABLES
 \* the maximum value
 MAX_UINT == 2^(256 - 60) - 1
 
-\* 1 billion toekns in the initial supply
+\* 1 billion tokens in the initial supply
 INITIAL_SUPPLY == 10^(9+18)
 
 \* the number of tokens the validator has staked
@@ -103,7 +103,7 @@ Init ==
     /\ failed = FALSE
 
 
-\* delegate `amount` coins to Validator
+\* delegate `amount` tokens to a validator
 Delegate(sender, validator, amount) ==
     LET fail ==
         \/ amount < 0
@@ -132,7 +132,7 @@ Delegate(sender, validator, amount) ==
           /\ UNCHANGED unbonded
 
 
-\* unbond `amount` tokens from Validator
+\* unbond `amount` tokens from a validator
 Unbond(sender, validator, amount) ==
     LET fail ==
         \/ amount < 0
@@ -154,31 +154,26 @@ Unbond(sender, validator, amount) ==
 
 \* withdraw unbonded tokens
 Withdraw(sender) ==
-    LET fail ==
-        \/ unbonded[1, sender] <= 0
+    LET fail == FALSE
     IN
     /\ lastTx' = [ id |-> nextTxId, tag |-> "withdraw", fail |-> fail,
                    sender |-> sender, toAddr |-> "withdraw", value |-> unbonded[1, sender] ]
     /\ failed' = (fail \/ failed)
-    /\  IF fail
-        THEN
-          UNCHANGED <<balanceOf, unbonded, delegated, bonded>>
-        ELSE
-          \* transaction succeeds
-          /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ + unbonded[1, sender] ]
-          /\ unbonded' = [ n \in 1..UnbondingLength, user \in UserAddrs |-> 
-                          IF user = sender
-                          THEN unbonded[n, sender] - unbonded[1, sender]
-                          ELSE unbonded[n, user]
-                         ]
-          /\ UNCHANGED  <<delegated, bonded>>
+    \* transaction always succeeds
+    /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ + unbonded[1, sender] ]
+    /\ unbonded' = [ n \in 1..UnbondingLength, user \in UserAddrs |-> 
+                    IF user = sender
+                    THEN unbonded[n, sender] - unbonded[1, sender]
+                    ELSE unbonded[n, user]
+                   ]
+    /\ UNCHANGED  <<delegated, bonded>>
 
 Common ==
     /\ nextTxId' = nextTxId + 1
     /\ txCounter' = txCounter + 1
     /\ UNCHANGED epoch
 
-ShiftEpochoedVariables ==
+ShiftEpochedVariables ==
     /\ unbonded' = [ n \in 1..UnbondingLength, user \in UserAddrs |-> 
                     IF n < UnbondingLength
                     THEN unbonded[n+1, user]
@@ -198,7 +193,7 @@ ShiftEpochoedVariables ==
 AdvanceEpoch ==
     /\ epoch' = epoch + 1
     /\ txCounter' = 0
-    /\ ShiftEpochoedVariables  
+    /\ ShiftEpochedVariables  
     /\ UNCHANGED <<balanceOf, lastTx, nextTxId, failed>>
 
 Next ==
