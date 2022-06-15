@@ -12,6 +12,8 @@ PipelineLength == 2
 
 UnbondingLength == 6
 
+TxsEpoch == 4
+
 VARIABLES
     \* Coin balance for every Cosmos account.
     \*
@@ -19,15 +21,15 @@ VARIABLES
     balanceOf,
     \* Balance of unbonded coins that cannot be used during the bonding period.
     \*
-    \* @type: EPOCHED;
+    \* @type: UNBONDED;
     unbonded,
     \* Coins that are delegated to Validator.
     \*
-    \* @type: DELEGATEDEPOCHED;
+    \* @type: DELEGATED;
     delegated,
     \* Voting power of the validator.
     \*
-    \* @type: EPOCHED;
+    \* @type: BONDED;
     bonded
 
 \* Variables that model transactions, not the state machine.

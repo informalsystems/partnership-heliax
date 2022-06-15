@@ -27,7 +27,11 @@ CONSTANTS
     PipelineLength,
 
     \* @type: Int;
-    UnbondingLength
+    UnbondingLength,
+    
+    \* tx per epoch
+    \* @type: Int;
+    TxsEpoch
 
 VARIABLES
     \* Token balance for every account.
@@ -36,15 +40,15 @@ VARIABLES
     balanceOf,
     \* Balance of unbonded tokens that cannot be used during the bonding period.
     \*
-    \* @type: EPOCHED;
+    \* @type: UNBONDED;
     unbonded,
     \* Token that are delegated to a validator.
     \*
-    \* @type: DELEGATEDEPOCHED;
+    \* @type: DELEGATED;
     delegated,
     \* Tokens bonded at a given validator.
     \*
-    \* @type: EPOCHED;
+    \* @type: BONDED;
     bonded
 
 
@@ -78,9 +82,6 @@ INIT_VALIDATOR_STAKE == 1000000000000000000000
 
 \* the amount of voting power per token
 VOTES_PER_TOKEN == 1
-
-\* tx per epoch
-TXS_PER_EPOCH == 10
 
 \* Initialize the balances
 Init ==
@@ -197,7 +198,7 @@ AdvanceEpoch ==
     /\ UNCHANGED <<balanceOf, lastTx, nextTxId, failed>>
 
 Next ==
-    IF txCounter = TXS_PER_EPOCH
+    IF txCounter = TxsEpoch
     THEN
       \* move to the next epoch
       AdvanceEpoch
