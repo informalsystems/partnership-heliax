@@ -2,12 +2,17 @@
 \* an instance for model checking Staking.tla with Apalache
 EXTENDS Sequences, Staking_typedefs
 
-\* Use the set of three addresses.
-UserAddrs == { "user2", "user3", "validator" }
+\* Use the set of four addresses, including two validators.
+UserAddrs == { "user2", "user3", "val1", "val2"}
 
-PipelineLength == 6
+\* Set of two validators.
+ValidatorAddrs == {"val1", "val2"}
 
-UnbondingLength == 2
+PipelineLength == 2
+
+UnbondingLength == 6
+
+TxsEpoch == 4
 
 VARIABLES
     \* Coin balance for every Cosmos account.
@@ -16,12 +21,16 @@ VARIABLES
     balanceOf,
     \* Balance of unbonded coins that cannot be used during the bonding period.
     \*
-    \* @type: EPOCHED;
+    \* @type: UNBONDED;
     unbonded,
     \* Coins that are delegated to Validator.
     \*
-    \* @type: EPOCHED;
-    delegated
+    \* @type: DELEGATED;
+    delegated,
+    \* Voting power of the validator.
+    \*
+    \* @type: BONDED;
+    bonded
 
 \* Variables that model transactions, not the state machine.
 VARIABLES    
@@ -55,11 +64,14 @@ NoTenTransactions ==
 NoWithdraw ==
     lastTx.tag /= "withdraw"
 
+ValDelegatedFold(set, val) == LET SumDelegated(p,q) == p + delegated[1, q, val]
+                              IN ApaFoldSet( SumDelegated, 0, set )
+
+VotingpowerDelagations ==
+    \A val \in ValidatorAddrs:
+    ValDelegatedFold(UserAddrs, val) = bonded[1, val]
+
 BalanceAlwaysPositive == 
     \A user \in UserAddrs: balanceOf[user] >= 0
-
-\* outdated, also takes forever to check this
-\*UserConstantAmount == 
-\*    \A user \in UserAddrs: balanceOf[user] + unbonded[user] + delegated[user] = INITIAL_SUPPLY
 
 ===============================================================================

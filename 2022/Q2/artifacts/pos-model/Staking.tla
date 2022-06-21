@@ -14,29 +14,43 @@
 EXTENDS Integers, Apalache, Staking_typedefs
 
 CONSTANTS
-    \* Set of all addresses on Cosmos.
+    \* Set of all user addresses.
     \* @type: Set(ADDR);
     UserAddrs,
+
+    \* Set of all validator addresses.
+    \* ValidatorAddrs must be a subset of UserAddrs
+    \* @type: Set(ADDR);
+    ValidatorAddrs,
 
     \* @type: Int;
     PipelineLength,
 
     \* @type: Int;
-    UnbondingLength
+    UnbondingLength,
+    
+    \* tx per epoch
+    \* @type: Int;
+    TxsEpoch
 
 VARIABLES
-    \* Coin balance for every Cosmos account.
+    \* Token balance for every account.
     \*
     \* @type: BALANCE;
     balanceOf,
-    \* Balance of unbonded coins that cannot be used during the bonding period.
+    \* Balance of unbonded tokens that cannot be used during the bonding period.
     \*
-    \* @type: EPOCHED;
+    \* @type: UNBONDED;
     unbonded,
-    \* Coins that are delegated to Validator.
+    \* Token that are delegated to a validator.
     \*
-    \* @type: EPOCHED;
-    delegated
+    \* @type: DELEGATED;
+    delegated,
+    \* Tokens bonded at a given validator.
+    \*
+    \* @type: BONDED;
+    bonded
+
 
 \* Variables that model transactions, epochs and offsets, not the state machine.
 VARIABLES    
@@ -57,34 +71,32 @@ VARIABLES
     \* @type: Bool;
     failed
 
-\* the maximum value in Cosmos
+\* the maximum value
 MAX_UINT == 2^(256 - 60) - 1
 
-\* 1 billion coins in the initial supply
+\* 1 billion tokens in the initial supply
 INITIAL_SUPPLY == 10^(9+18)
 
-\* the number of coins the validator has staked
+\* the number of tokens the validator has staked
 INIT_VALIDATOR_STAKE == 1000000000000000000000
 
-\* tx per epoch
-TXS_PER_EPOCH == 10
-
-\* the validator account
-Validator == "validator"
+\* the amount of voting power per token
+VOTES_PER_TOKEN == 1
 
 \* Initialize the balances
 Init ==
-    /\ balanceOf = [ a \in UserAddrs |->
-        IF a /= "validator"
-        THEN INITIAL_SUPPLY
-        ELSE INITIAL_SUPPLY - INIT_VALIDATOR_STAKE
+    /\ balanceOf = [ a \in UserAddrs |-> 
+        IF a \in ValidatorAddrs
+        THEN INITIAL_SUPPLY - INIT_VALIDATOR_STAKE
+        ELSE INITIAL_SUPPLY
        ]
     /\ unbonded = [ n \in 1..UnbondingLength, a \in UserAddrs |-> 0 ]
-    /\ delegated = [ n \in 1..PipelineLength, a \in UserAddrs |->
-        IF a /= "validator"
-        THEN 0
-        ELSE INIT_VALIDATOR_STAKE
+    /\ delegated = [ n \in 1..UnbondingLength, a \in UserAddrs, b \in ValidatorAddrs |->
+        IF a \in ValidatorAddrs /\ a = b
+        THEN INIT_VALIDATOR_STAKE
+        ELSE 0
        ]
+    /\ bonded = [ n \in 1..UnbondingLength, a \in ValidatorAddrs |-> INIT_VALIDATOR_STAKE ]
     /\ nextTxId = 0
     /\ epoch = 1
     /\ txCounter = 0
@@ -92,101 +104,111 @@ Init ==
     /\ failed = FALSE
 
 
-\* delegate `amount` coins to Validator
-Delegate(sender, amount) ==
+\* delegate `amount` tokens to a validator
+Delegate(sender, validator, amount) ==
     LET fail ==
         \/ amount < 0
         \/ amount > balanceOf[sender]
     IN
     /\ lastTx' = [ id |-> nextTxId, tag |-> "delegate", fail |-> fail,
-                   sender |-> sender, toAddr |-> Validator, value |-> amount ]
+                   sender |-> sender, toAddr |-> validator, value |-> amount ]
     /\ failed' = (fail \/ failed)
     /\  IF fail
         THEN
-          UNCHANGED <<balanceOf, unbonded, delegated>>
+          UNCHANGED <<balanceOf, unbonded, delegated, bonded>>
         ELSE
           \* transaction succeeds
           \* update the balance of 'sender'
           /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ - amount]
-          /\ delegated' = [ delegated EXCEPT ![PipelineLength, sender] = @ + amount]
+          /\ delegated' = [ n \in 1..UnbondingLength, user \in UserAddrs, val \in ValidatorAddrs |-> 
+                     IF n >= PipelineLength /\ user = sender /\ val = validator
+                     THEN delegated[n, user, val] + amount
+                     ELSE delegated[n, user, val]
+                    ]
+          /\ bonded' = [ n \in 1..UnbondingLength, user \in ValidatorAddrs |-> 
+                     IF n >= PipelineLength /\ user = sender
+                     THEN bonded[n, user] + amount
+                     ELSE bonded[n, user]
+                    ]
           /\ UNCHANGED unbonded
 
 
-\* unbond `amount` coins from Validator
-Unbond(sender, amount) ==
+\* unbond `amount` tokens from a validator
+Unbond(sender, validator, amount) ==
     LET fail ==
         \/ amount < 0
-        \/ sender = Validator
-        \/ amount > delegated[PipelineLength,sender]
+        \/ amount > delegated[UnbondingLength, sender, validator]
     IN
     /\ lastTx' = [ id |-> nextTxId, tag |-> "unbond", fail |-> fail,
-                   sender |-> sender, toAddr |-> Validator, value |-> amount ]
+                   sender |-> sender, toAddr |-> validator, value |-> amount ]
     /\ failed' = (fail \/ failed)
     /\  IF fail
         THEN
-          UNCHANGED <<balanceOf, unbonded, delegated>>
+          UNCHANGED <<balanceOf, unbonded, delegated, bonded>>
         ELSE
           \* transaction succeeds
           /\ unbonded' = [ unbonded EXCEPT ![UnbondingLength, sender] = @ + amount ]
-          /\ delegated' = [ delegated EXCEPT ![PipelineLength, sender] = @ - amount ]
+          /\ delegated' = [ delegated EXCEPT ![UnbondingLength, sender, validator] = @ - amount ]
+          /\ bonded' = [ bonded EXCEPT ![UnbondingLength, validator] = @ - amount]
           /\ UNCHANGED  balanceOf
+          
 
-\* withdraw unbonded coins
+\* withdraw unbonded tokens
 Withdraw(sender) ==
-    LET fail ==
-        \/ sender = Validator
-        \/ unbonded[1, sender] <= 0
+    LET fail == FALSE
     IN
     /\ lastTx' = [ id |-> nextTxId, tag |-> "withdraw", fail |-> fail,
-                   sender |-> sender, toAddr |-> Validator, value |-> unbonded[1, sender] ]
+                   sender |-> sender, toAddr |-> "withdraw", value |-> unbonded[1, sender] ]
     /\ failed' = (fail \/ failed)
-    /\  IF fail
-        THEN
-          UNCHANGED <<balanceOf, unbonded, delegated>>
-        ELSE
-          \* transaction succeeds
-          /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ + unbonded[1, sender] ]
-          /\ unbonded' = [ n \in 1..UnbondingLength, user \in UserAddrs |-> 
-                          IF user = sender
-                          THEN unbonded[n, sender] - unbonded[1, sender]
-                          ELSE unbonded[n, user]
-                         ]
-          /\ UNCHANGED  delegated
+    \* transaction always succeeds
+    /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ + unbonded[1, sender] ]
+    /\ unbonded' = [ n \in 1..UnbondingLength, user \in UserAddrs |-> 
+                    IF user = sender
+                    THEN unbonded[n, sender] - unbonded[1, sender]
+                    ELSE unbonded[n, user]
+                   ]
+    /\ UNCHANGED  <<delegated, bonded>>
 
 Common ==
     /\ nextTxId' = nextTxId + 1
     /\ txCounter' = txCounter + 1
     /\ UNCHANGED epoch
 
-ShiftEpochoedVariables ==
+ShiftEpochedVariables ==
     /\ unbonded' = [ n \in 1..UnbondingLength, user \in UserAddrs |-> 
                     IF n < UnbondingLength
                     THEN unbonded[n+1, user]
                     ELSE unbonded[n, user]
                    ]
-    /\ delegated' = [ n \in 1..PipelineLength, user \in UserAddrs |-> 
-                     IF n < PipelineLength
-                     THEN delegated[n+1, user]
-                     ELSE delegated[n, user]
+    /\ delegated' = [ n \in 1..UnbondingLength, user \in UserAddrs, val \in ValidatorAddrs|-> 
+                     IF n < UnbondingLength
+                     THEN delegated[n+1, user, val]
+                     ELSE delegated[n, user, val]
                     ]
+    /\ bonded' = [ n \in 1..UnbondingLength, user \in ValidatorAddrs |-> 
+                  IF n < UnbondingLength
+                  THEN bonded[n+1, user]
+                  ELSE bonded[n, user]
+                 ]
 
 AdvanceEpoch ==
     /\ epoch' = epoch + 1
     /\ txCounter' = 0
-    /\ ShiftEpochoedVariables  
+    /\ ShiftEpochedVariables  
     /\ UNCHANGED <<balanceOf, lastTx, nextTxId, failed>>
 
 Next ==
-    IF txCounter = TXS_PER_EPOCH
+    IF txCounter = TxsEpoch
     THEN
       \* move to the next epoch
       AdvanceEpoch
     ELSE
       \E sender \in UserAddrs:
+      \E validator \in ValidatorAddrs:
       \E amount \in Int:
         /\ amount <= MAX_UINT
-        /\ \/ Delegate(sender, amount)
-           \/ Unbond(sender, amount)
+        /\ \/ Delegate(sender, validator, amount)
+           \/ Unbond(sender, validator, amount)
            \/ Withdraw(sender)
         /\ Common
 
