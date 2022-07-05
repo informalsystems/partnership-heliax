@@ -12,10 +12,12 @@ type VotingPower uint
 
 type Validator struct {
   consensus_key map<Epoch, Key>
-  state map<Epoch, {inactive, candidate, frozen, jailed}>
+  state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
   voting_power map<Epoch, VotingPower>
   reward_address Addr
+  jailed bool
+  frozen bool
 }
 
 type Bond struct {
@@ -32,9 +34,8 @@ type Unbond struct {
 
 type Slash struct {
   epoch Epoch
-  validator Addr
-  voting_power VotingPower //new in cubic slashing
-  slash_type {duplicate_vote, ligth_client_attack} //not used in cubic slashing
+  rate float
+  vpower_fraction VotinPower //new in cubic slashing
 }
 
 type WeightedValidator struct {
@@ -86,6 +87,8 @@ tx_become_validator(validator_address, consensus_key, staking_reward_address)
     //set status to candidate and consensus key at n + pipeline_length
     validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
+    validators[validator_address].jailed = false
+    validators[validator_address].frozen = false
 }
 ```
 
@@ -218,8 +221,7 @@ func bond(validator_address, delegator_address, amount, offset_length)
 func unbond(validator_address, delegator_address, amount)
 {
   //disallow unbonding if the validator is frozen
-  var state = read_epoched_field(validators[validator_address].state, cur_epoch, ⊥)
-  if (state != frozen) then
+  if (validators[validator_address].frozen == false) then
     //compute total bonds from delegator to validator
     var delbonds = compute_total_from_deltas(bonds[delegator_address][validator_address].deltas, cur_epoch + unbonding_length)
     //check if there are enough bonds
@@ -264,16 +266,28 @@ func withdraw(validator_address, delegator_address)
 }
 ```
 
+
 ```go
+/* COMMENT
+  the model assumes that the evidence cannot be too much in the past
+  CHECK: can some evidences be lost on translation? epochs are based in time and heights.
+  ALTERNATIVE: it may be simple to filter them out at the PoS module rather than in Tendermint.
+*/
+/* COMMENT
+  what about if the evidence is for the very last epoch? Problem with ranges: +1 may not exist.
+*/
 func new_evidence(evidence)
 {
   //create slash
   var vpower = read_epoched_field(validators[evidence.validator].total_deltas, evidence.epoch, 0)
-  var slash = Slash{epoch: evidence.epoch, rate: 0, voting_power: vpower}
+  var slash = Slash{epoch: evidence.epoch, rate: 0, vpower_fraction: compute_vpower_fraction(evidence.type, vpower)}
   //enqueue slash (Step 1.1 of cubic slashing)
-  append(enqueued_slashes[evidence.epoch + unbonding_epoch], slash)
+  append(enqueued_slashes[evidence.epoch + unbonding_length], slash)
+  //jail validator (Step 1.2 of cubic slashing)
+  validators[validator_address].state[cur_epoch + 1] = jailed
+  remove_from_validator_sets(validator_address, cur_epoch + 1)
   //freeze validator to prevent delegrators from altering their delegations (Step 1.3 of cubic slashing)
-  validators[validator_address].state[cur_epoch] = frozen
+  validators[validator_address].frozen = true
 }
 ```
 
@@ -347,40 +361,49 @@ func is_validator(validator_address, epoch){
 ```
 
 ```go
+func compute_vpower_fraction(infraction, voting_power){
+  switch infraction
+    case duplicate_vote: return duplicate_vote_rate * voting_power
+    case ligth_client_attack: return ligth_client_attack_rate * voting_power
+    default: panic()
+}
+```
+
+```go
 end_of_epoch()
 {
   set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
   forall (validator_address in set_validators) do
-    //jail validator (Step 1.2 of cubic slashing). This also unfreeze the validator (Step 2.5 of cubic slashing)
-    validators[validator_address].state[cur_epoch+1] = jailed
-    remove_from_validator_sets(validator_address, cur_epoch+1)
     //iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
     var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1 && s.validator == validator_address}
     //calculate the slash rate (Step 2.2 of cubic slashing)
-    var rate = compute_slash_rate(set_slashes)
+    var rate = compute_final_rate(set_slashes)
     forall (slash in {s | s in enqueued_slashes[cur_epoch] && slash.validator == validator_address}) do
-      //set the slash on the now "finalised" slash in storage (Step 2.3 of cubic slashing)
+      //set the slash on the now "finalised" slash amount in storage (Step 2.3 of cubic slashing)
       slash.rate = rate
       append(slashes[validator_address], slash)
-      slashed_amount = slash.voting_power * slash.rate
+      var vpower = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
+      var slashed_amount = vpower * slash.rate
       //update voting power (Step 2.4 of cubic slashing)
       //compute new total_deltas for next epoch
-      var total_offset = read_epoched_field(validators[evidence.validator].total_deltas, cur_epoch+1, 0)
+      var total_offset = read_epoched_field(validators[validator_address].total_deltas, cur_epoch+1, 0)
       validators[validator_address].total_deltas[cur_epoch+1] = total_offset - slashed_amount 
       //update validator's voting_power and total_voting_power for next epoch
       update_voting_power(slash.validator, cur_epoch+1)
       update_total_voting_power(cur_epoch+1)
+    //unfrozen the validator (Step 2.5 of cubic slashing)
+    frozen[validator_address] = false
   cur_epoch = cur_epoch + 1
 }
 ```
 
 ```go
 //Cubic slashing function
-compute_slash_rate(slashes)
+compute_final_rate(slashes)
 {
   var voting_power_fraction = 0
   forall (slash in slashes) do
-    voting_power_fraction += slash.voting_power
+    voting_power_fraction += slash.voting_power_fraction
   return max{0.01, min{1, voting_power_fraction^2 * 9}}
 }
 ```
