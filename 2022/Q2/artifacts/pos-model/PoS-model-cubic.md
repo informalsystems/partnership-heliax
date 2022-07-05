@@ -67,7 +67,8 @@ validators[] in Addr → Validator //map from address to validator
 balances[] in Addr → int //map from address to integer
 bonds[][] in (Addr X Addr) → Bond //map from address to map from address to bond
 unbonds[][] in (Addr X Addr) → Unbond  //map from (address, address) to unbond
-slashes[] in Epoch → 2^Slash //map from address to list of slashes
+slashes[] in Addr → 2^Slash //map from address to list of slashes
+enqueued_slashes[] in Epoch → 2^Slash //map from epoch to list of slashes
 
 validator_sets[] in Epoch → ValidatorSet //map from epoch to validator_set
 total_voting_power[] in Epoch to VotingPower //map from epoch to voting_power
@@ -360,7 +361,7 @@ end_of_epoch()
     forall (slash in {s | s in enqueued_slashes[cur_epoch] && slash.validator == validator_address}) do
       //set the slash on the now "finalised" slash in storage (Step 2.3 of cubic slashing)
       slash.rate = rate
-      append(slashes[cur_epoch], slash)
+      append(slashes[validator_address], slash)
       slashed_amount = slash.voting_power * slash.rate
       //update voting power (Step 2.4 of cubic slashing)
       //compute new total_deltas for next epoch
