@@ -35,7 +35,7 @@ type Unbond struct {
 type Slash struct {
   epoch Epoch
   rate float
-  vpower_fraction VotinPower //new in cubic slashing
+  vpower_fraction VotingPower //new in cubic slashing
 }
 
 type WeightedValidator struct {
@@ -284,9 +284,9 @@ func new_evidence(evidence)
   //enqueue slash (Step 1.1 of cubic slashing)
   append(enqueued_slashes[evidence.epoch + unbonding_length], slash)
   //jail validator (Step 1.2 of cubic slashing)
-  validators[validator_address].state[cur_epoch + 1] = jailed
+  validators[validator_address].jailed = true
   remove_from_validator_sets(validator_address, cur_epoch + 1)
-  //freeze validator to prevent delegrators from altering their delegations (Step 1.3 of cubic slashing)
+  //freeze validator to prevent delegators from altering their delegations (Step 1.3 of cubic slashing)
   validators[validator_address].frozen = true
 }
 ```
@@ -345,7 +345,7 @@ func update_validator_sets(validator_address, epoch, power_before, power_after)
 ```
 
 ```go
-func remove_from_validator_sets(validator_address)
+func remove_from_validator_sets(validator_address, epoch)
 {
   var max_inactive = last(validator_sets[epoch].inactive)
   remove(validator_sets[epoch].active, validator_address)
@@ -372,13 +372,13 @@ func compute_vpower_fraction(infraction, voting_power){
 ```go
 end_of_epoch()
 {
-  set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
+  var set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
   forall (validator_address in set_validators) do
     //iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
     var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1 && s.validator == validator_address}
     //calculate the slash rate (Step 2.2 of cubic slashing)
     var rate = compute_final_rate(set_slashes)
-    forall (slash in {s | s in enqueued_slashes[cur_epoch] && slash.validator == validator_address}) do
+    forall (slash in {s | s in enqueued_slashes[cur_epoch] && s.validator == validator_address}) do
       //set the slash on the now "finalised" slash amount in storage (Step 2.3 of cubic slashing)
       slash.rate = rate
       append(slashes[validator_address], slash)
@@ -391,8 +391,8 @@ end_of_epoch()
       //update validator's voting_power and total_voting_power for next epoch
       update_voting_power(slash.validator, cur_epoch+1)
       update_total_voting_power(cur_epoch+1)
-    //unfrozen the validator (Step 2.5 of cubic slashing)
-    frozen[validator_address] = false
+    //unfreeze the validator (Step 2.5 of cubic slashing)
+    frozen[validator_address].frozen = false
   cur_epoch = cur_epoch + 1
 }
 ```
