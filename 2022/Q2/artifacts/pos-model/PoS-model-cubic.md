@@ -1,6 +1,7 @@
 ## Assumptions/simplifications
 
 - There is a single token type
+- There is no unjailing at the moment
 
 ## Data types
 
@@ -250,6 +251,7 @@ func unbond(validator_address, delegator_address, amount)
 ```
 
 ```go
+/* COMMENT: Somehting to check for correctness https://github.com/informalsystems/partnership-heliax/pull/16#discussion_r924319213 */
 //This function is called by transactions tx_withdraw_unbonds_validator and tx_withdraw_unbonds_delegator
 func withdraw(validator_address, delegator_address)
 {
