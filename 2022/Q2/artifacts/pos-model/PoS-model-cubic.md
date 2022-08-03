@@ -2,8 +2,7 @@
 
 - There is a single token type
 - There is an initial set of active and inactive validators
-- There are always enough non-jalied, candidate validators to fulfilled the active set of validators at any given epoch
-- There is no unjailing at the moment
+- There are always enough non-jalied, candidate validators to fulfill the active set of validators at any given epoch
 
 ## Data types
 
@@ -13,13 +12,18 @@ type Key
 type Epoch uint
 type VotingPower uint
 
+type JailRecord struct {
+  is_jailed bool
+  epoch Epoch
+}
+
 type Validator struct {
   consensus_key map<Epoch, Key>
   state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
   voting_power map<Epoch, VotingPower>
   reward_address Addr
-  jailed bool
+  jail_record JailRecord
   frozen bool
 }
 
@@ -27,7 +31,7 @@ type Bond struct {
   validator Addr //not used
   source Addr //not used
   deltas map<Epoch, int>
-  }
+}
 
 type Unbond struct {
   validator Addr //not used
@@ -57,9 +61,10 @@ type ValidatorSet struct {
 ```go
 pipeline_length uint
 unbonding_length uint
+min_sentence uint
 votes_per_token uint
-duplicate_vote_rate float //not used in cubic slashing
-ligth_client_attack_rate float //not used in cubic slashing
+duplicate_vote_rate float
+ligth_client_attack_rate float
 ```
 
 ## Variables
@@ -90,7 +95,7 @@ tx_become_validator(validator_address, consensus_key, staking_reward_address)
     //set status to candidate and consensus key at n + pipeline_length
     validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
-    validators[validator_address].jailed = false
+    validators[validator_address].jail_record = JailRecord{is_jailed: false, epoch: ⊥}
     validators[validator_address].frozen = false
     //add validator to the inactive set
     add_validator_to_inactive(validator_address, pipeline_length)
@@ -118,11 +123,24 @@ tx_deactivate(validator_address)
 tx_reactivate(validator_address)
 {
   var state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length, ⊥)
-  if (state == inactive && !validators[validator_address].jailed) then
+  if (state == inactive && !is_jailed(validator_address)) then
     //set status to candidate at n + pipeline_length
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
     //add validator to the inactive set
     add_validator_to_sets(validator_address, pipeline_length)
+}
+```
+
+```go
+tx_unjail(validator_address)
+{
+  //check validator is jailed and can be unjailed
+  if (is_jailed(validator_address) && (cur_epoch - validators[validator_address].jail_record.epoch > min_sentence)) then
+    validators[validator_address].jail_record = JailRecord{is_jailed: false, epoch: ⊥}
+    var state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length, ⊥)
+    //add the validator to the validator sets if it is a candidate by pipeline_length
+    if (state == candidate) then
+      add_validator_to_sets(validator_address, pipeline_length)
 }
 ```
 
@@ -199,7 +217,6 @@ tx_withdraw_unbonds_delegator(delegator_address)
 */
 func bond(validator_address, delegator_address, amount)
 {
-  //QUESTION: What if we remove this and it is up to the user to be smart bonding its tokens
   if is_validator(validator_address, cur_epoch+pipeline_length) then
     //add amount bond to delta at n+pipeline_length
     bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length] += amount
@@ -230,7 +247,7 @@ func bond(validator_address, delegator_address, amount)
 func unbond(validator_address, delegator_address, amount)
 {
   //disallow unbonding if the validator is frozen
-  if (validators[validator_address].frozen == false) then
+  if (is_validator(validator_address, cur_epoch+pipeline_length) && validators[validator_address].frozen == false) then
     //compute total bonds from delegator to validator
     var delbonds = compute_total_from_deltas(bonds[delegator_address][validator_address].deltas, cur_epoch + unbonding_length)
     //check if there are enough bonds
@@ -284,12 +301,12 @@ func withdraw(validator_address, delegator_address)
 func new_evidence(evidence)
 {
   //create slash
-  var vpower = read_epoched_field(validators[evidence.validator].total_deltas, evidence.epoch, 0)
-  var slash = Slash{epoch: evidence.epoch, rate: 0, vpower_fraction: compute_vpower_fraction(evidence.type, vpower)}
+  var total_staked = read_epoched_field(validators[evidence.validator].total_deltas, evidence.epoch, 0)
+  var slash = Slash{epoch: evidence.epoch, rate: 0, stake_fraction: compute_stake_fraction(evidence.type, total_staked)}
   //enqueue slash (Step 1.1 of cubic slashing)
   append(enqueued_slashes[evidence.epoch + unbonding_length], slash)
   //jail validator (Step 1.2 of cubic slashing)
-  validators[validator_address].jailed = true
+  validators[validator_address].jail_record = JailRecord{is_jailed: true, epoch: cur_epoch+1}
   remove_from_validator_sets(validator_address, 1)
   //freeze validator to prevent delegators from altering their delegations (Step 1.3 of cubic slashing)
   validators[validator_address].frozen = true
@@ -424,12 +441,12 @@ func update_validator_sets(validator_address, offset)
 
 ```go
 func is_validator(validator_address, epoch){
-    return read_epoched_field(validators[validator_address].state, epoch, ⊥) == candidate
+    return read_epoched_field(validators[validator_address].state, epoch, ⊥) != ⊥
 }
 ```
 
 ```go
-func compute_vpower_fraction(infraction, voting_power){
+func compute_stake_fraction(infraction, voting_power){
   switch infraction
     case duplicate_vote: return duplicate_vote_rate * voting_power
     case ligth_client_attack: return ligth_client_attack_rate * voting_power
@@ -450,14 +467,14 @@ end_of_epoch()
       //set the slash on the now "finalised" slash amount in storage (Step 2.3 of cubic slashing)
       slash.rate = rate
       append(slashes[validator_address], slash)
-      var bonded_tokens = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
-      var slashed_amount = bonded_tokens * slash.rate
+      var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
+      var slashed_amount = total_staked * slash.rate
       //update voting power (Step 2.4 of cubic slashing)
       update_total_deltas(validator_address, 1, -1*slashed_amount)
       update_voting_power(validator_address, 1)
       update_total_voting_power(1)
     //unfreeze the validator (Step 2.5 of cubic slashing)
-    frozen[validator_address].frozen = false
+    validators[validator_address].frozen = false
   cur_epoch = cur_epoch + 1
 }
 ```
@@ -470,6 +487,13 @@ compute_final_rate(slashes)
   forall (slash in slashes) do
     voting_power_fraction += slash.voting_power_fraction
   return max{0.01, min{1, voting_power_fraction^2 * 9}}
+}
+```
+
+```go
+is_jailed(validator_address)
+{
+  return validators[validator_address].jail_record.is_jailed
 }
 ```
 
