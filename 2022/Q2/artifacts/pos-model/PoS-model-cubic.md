@@ -98,7 +98,7 @@ tx_become_validator(validator_address, consensus_key, staking_reward_address)
     validators[validator_address].jail_record = JailRecord{is_jailed: false, epoch: ⊥}
     validators[validator_address].frozen = false
     //add validator to the inactive set
-    add_validator_to_inactive(validator_address, pipeline_length)
+    add_validator_to_sets(validator_address, pipeline_length)
 
 }
 ```
@@ -115,7 +115,8 @@ tx_deactivate(validator_address)
   if (state == candidate) then
     //set status to inactive at n + pipeline_length
     validators[validator_address].state[cur_epoch+pipeline_length] = inactive
-    remove_validator_from_sets(validator_address, offset)
+    remove_validator_from_sets(validator_address, pipeline_length)
+    update_total_voting_power(pipeline_length)
 }
 ```
 
@@ -128,6 +129,7 @@ tx_reactivate(validator_address)
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
     //add validator to the inactive set
     add_validator_to_sets(validator_address, pipeline_length)
+    update_total_voting_power(pipeline_length)
 }
 ```
 
@@ -135,12 +137,14 @@ tx_reactivate(validator_address)
 tx_unjail(validator_address)
 {
   //check validator is jailed and can be unjailed
-  if (is_jailed(validator_address) && (cur_epoch - validators[validator_address].jail_record.epoch > min_sentence)) then
+  var epochs_jailed = cur_epoch + pipeline_length - validators[validator_address].jail_record.epoch
+  if (is_jailed(validator_address) && (epochs_jailed > min_sentence)) then
     validators[validator_address].jail_record = JailRecord{is_jailed: false, epoch: ⊥}
     var state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length, ⊥)
     //add the validator to the validator sets if it is a candidate by pipeline_length
     if (state == candidate) then
       add_validator_to_sets(validator_address, pipeline_length)
+      update_total_voting_power(pipeline_length)
 }
 ```
 
@@ -307,20 +311,10 @@ func new_evidence(evidence)
   append(enqueued_slashes[evidence.epoch + unbonding_length], slash)
   //jail validator (Step 1.2 of cubic slashing)
   validators[validator_address].jail_record = JailRecord{is_jailed: true, epoch: cur_epoch+1}
-  remove_from_validator_sets(validator_address, 1)
+  remove_validator_from_sets(validator_address, 1)
+  update_total_voting_power(1)
   //freeze validator to prevent delegators from altering their delegations (Step 1.3 of cubic slashing)
   validators[validator_address].frozen = true
-}
-```
-
-```go
-add_validator_to_inactive(validator_address, offset)
-{
-  var epochs = {epoch | cur_epoch+offset <= epoch <= cur_epoch+unbonding_length && (epoch > cur_epoch+offset => validator_sets[epoch] != ⊥)}
-  forall (epoch in epochs) do
-    var sets = read_epoched_field(validator_sets, epoch, ⊥)
-    sets = add(sets.inactive, WeightedValidator{validator: validator_address, voting_power: 0})
-    validator_sets[epoch] = sets
 }
 ```
 
@@ -472,7 +466,6 @@ end_of_epoch()
       //update voting power (Step 2.4 of cubic slashing)
       update_total_deltas(validator_address, 1, -1*slashed_amount)
       update_voting_power(validator_address, 1)
-      update_total_voting_power(1)
     //unfreeze the validator (Step 2.5 of cubic slashing)
     validators[validator_address].frozen = false
   cur_epoch = cur_epoch + 1
