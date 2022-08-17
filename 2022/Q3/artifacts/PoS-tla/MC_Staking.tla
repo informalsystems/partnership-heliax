@@ -8,11 +8,11 @@ UserAddrs == { "user2", "user3", "val1", "val2"}
 \* Set of two validators.
 ValidatorAddrs == {"val1", "val2"}
 
-PipelineLength == 2
+PipelineLength == 1
 
-UnbondingLength == 4
+UnbondingLength == 1
 
-TxsEpoch == 2
+TxsEpoch == 1
 
 VARIABLES
     \* Token balance for every account.
@@ -43,13 +43,9 @@ VARIABLES
     \*
     \* @type: ENQUEUEDSLASHES;
     enqueuedSlashes,
-    \* Set of jailed validators
-    \*
-    \* @type: Set(ADDR);
-    jailedValidators,
     \* Set of frozen validators
     \*
-    \* @type: Set(ADDR);
+    \* @type: FROZEN;
     frozenValidators
 
 \* Variables that model transactions, not the state machine.
@@ -93,9 +89,21 @@ NoFiveTransactions ==
 NoTenTransactions ==
     nextTxId < 10 \/ failed
 
+\* No successful withdrawing. Use it to produce a counterexample.
+NoSuccessfulWithdraw ==
+    LET Example ==
+        /\ lastTx.tag = "withdraw"
+        /\ lastTx.value > 0
+    IN
+    ~Example
+
 \* No withdrawing. Use it to produce a counterexample.
 NoWithdraw ==
     lastTx.tag /= "withdraw"
+
+\* No evidence. Use it to produce a counterexample.
+NoEvidence ==
+    lastTx.tag /= "evidence"
 
 \* From Chris
 \* Try to capture that for a group of validators with total voting power X at

@@ -17,6 +17,8 @@
 
   @typeAlias: ENQUEUEDSLASHES = <<Int, ADDR>> -> Set(SLASH);
 
+  @typeAlias: FROZEN = Int -> Set(ADDR);
+
   A transaction (a la discriminated union but all fields are packed together):
   @typeAlias: TX = [
     tag: Str,
