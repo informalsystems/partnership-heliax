@@ -179,13 +179,11 @@ ComputedUnbonds(setBonds, totalAmount, e) == LET
                                          F(record, bond) == 
                                          IF record.remaining > 0
                                          THEN 
-                                          IF record.remaining > bond.amount
-                                          THEN [ remaining |-> record.remaining - bond.amount,
-                                                 set |-> record.set \union {[id |-> record.id, amount |-> bond.amount, start |-> bond.epoch, end |-> e]},
-                                                 id |-> record.id + 1 ]
-                                          ELSE [ remaining |-> 0,
-                                                 set |-> record.set \union {[id |-> record.id, amount |-> record.remaining, start |-> bond.epoch, end |-> e]},
-                                                 id |-> record.id + 1 ]    
+                                          LET min == Min(record.remaining, bond.amount) 
+                                          IN
+                                          [ remaining |-> record.remaining - min,
+                                            set |-> record.set \union {[id |-> record.id, amount |-> min, start |-> bond.epoch, end |-> e]},
+                                            id |-> record.id + 1 ]   
                                          ELSE [ remaining |-> 0,
                                                 set |-> record.set,
                                                 id |-> record.id ]
