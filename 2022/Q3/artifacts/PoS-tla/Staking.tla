@@ -116,7 +116,7 @@ Init ==
                    ]
     /\ unbonded = [ a \in UserAddrs, b \in ValidatorAddrs |-> {} ]
     /\ bonded = [ a \in UserAddrs, b \in ValidatorAddrs |->
-                  IF a \in ValidatorAddrs /\ a = b
+                  IF a = b
                   THEN { [ id |-> 0, epoch |-> 1, amount |-> INIT_VALIDATOR_STAKE ] }
                   ELSE {}
                 ]
@@ -159,10 +159,10 @@ Delegate(sender, validator, amount) ==
                                                                           amount |-> amount ]}]
           /\ idBonds' = idBonds + 1
           \* updates totalDeltas from PipelineLength to UnbondingLength 
-          /\ totalDeltas' = [ n \in 0..2*UnbondingLength, val \in ValidatorAddrs |-> 
+          /\ totalDeltas' = [ n \in 0..2*UnbondingLength, val \in ValidatorAddrs |-> totalDeltas[n, val] + 
                               IF n >= UnbondingLength + PipelineLength /\ val = validator
-                              THEN totalDeltas[n, val] + amount
-                              ELSE totalDeltas[n, val]
+                              THEN amount
+                              ELSE 0
                             ]
 
 \* Follows the specification: it counts all bonds, even those that have not been materialized yet.
@@ -174,13 +174,13 @@ TotalBonds(sender, validator) == LET
                                  IN ApaFoldSet(F, 0, bonded[sender, validator])
 
 \* @type: (Set(BOND), Int, Int) => [ remaining: Int, set: Set(UNBOND), id: Int ];
-ComputedUnbonds(setBonds, amount, e) == LET 
+ComputedUnbonds(setBonds, totalAmount, e) == LET 
                                          \* @type: ([ remaining: Int, set: Set(UNBOND), id: Int ], BOND) => [ remaining: Int, set: Set(UNBOND), id: Int ];
                                          F(record, bond) == 
                                          IF record.remaining > 0
                                          THEN 
-                                          IF record.remaining > amount
-                                          THEN [ remaining |-> record.remaining - amount,
+                                          IF record.remaining > bond.amount
+                                          THEN [ remaining |-> record.remaining - bond.amount,
                                                  set |-> record.set \union {[id |-> record.id, amount |-> bond.amount, start |-> bond.epoch, end |-> e]},
                                                  id |-> record.id + 1 ]
                                           ELSE [ remaining |-> 0,
@@ -189,7 +189,7 @@ ComputedUnbonds(setBonds, amount, e) == LET
                                          ELSE [ remaining |-> 0,
                                                 set |-> record.set,
                                                 id |-> record.id ]
-                                        IN ApaFoldSet(F, [ remaining |-> amount, set |-> {}, id |-> idUnbonds], setBonds)
+                                        IN ApaFoldSet(F, [ remaining |-> totalAmount, set |-> {}, id |-> idUnbonds], setBonds)
 
 \* Unbond `amount` tokens from a validator
 Unbond(sender, validator, amount) ==

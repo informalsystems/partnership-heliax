@@ -81,29 +81,30 @@ INSTANCE Staking
 
 \* invariants to check and break the system
 
-\* a counterexample to this invariant will produce five transactions,
-NoFiveTransactions ==
-    nextTxId < 5 \/ failed
-
-\* a counterexample to this invariant will produce ten transactions,
-NoTenTransactions ==
-    nextTxId < 10 \/ failed
-
 \* No successful withdrawing. Use it to produce a counterexample.
 NoSuccessfulWithdraw ==
     LET Example ==
         /\ lastTx.tag = "withdraw"
         /\ lastTx.value > 0
+        /\ ~lastTx.fail
     IN
     ~Example
 
 \* No withdrawing. Use it to produce a counterexample.
 NoWithdraw ==
-    lastTx.tag /= "withdraw"
+    LET Example ==
+        /\ lastTx.tag = "withdraw"
+        /\ ~lastTx.fail
+    IN
+    ~Example
 
 \* No evidence. Use it to produce a counterexample.
 NoEvidence ==
-    lastTx.tag /= "evidence"
+    LET Example ==
+        /\ lastTx.tag = "evidence"
+        /\ ~lastTx.fail
+    IN
+    ~Example
 
 \* From Chris
 \* Try to capture that for a group of validators with total voting power X at
