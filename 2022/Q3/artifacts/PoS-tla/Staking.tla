@@ -107,6 +107,16 @@ INIT_VALIDATOR_STAKE == 1000000000000000000000
 \* the amount of voting power per token
 SLASH_RATE == 1
 
+(*
+* Computes the Max of two numbers.
+*)
+Max(x, y) == IF x > y THEN x ELSE y
+
+(*
+* Computes the Min of two numbers.
+*)
+Min(x, y) == IF x < y THEN x ELSE y
+
 \* Initialize the balances
 Init ==
     /\ balanceOf = [ a \in UserAddrs |-> 
@@ -270,16 +280,6 @@ Evidence(e, validator) ==
     /\ lastTx' = [ id |-> nextTxId, tag |-> "evidence", fail |-> FALSE,
                    sender |-> validator, toAddr |-> validator, value |-> e ]
     /\ UNCHANGED <<epoch, balanceOf, posAccount, totalDeltas, bonded, idBonds, unbonded, idUnbonds, slashes, nextTxId, txCounter, failed>>
-
-(*
-* Computes the Max of two numbers.
-*)
-Max(x, y) == IF x > y THEN x ELSE y
-
-(*
-* Computes the Min of two numbers.
-*)
-Min(x, y) == IF x < y THEN x ELSE y
 
 (*
 * Actual function that requires Real numbers
