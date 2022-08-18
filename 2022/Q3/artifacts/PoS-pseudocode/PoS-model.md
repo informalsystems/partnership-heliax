@@ -24,7 +24,7 @@ type Validator struct {
   voting_power map<Epoch, VotingPower>
   reward_address Addr
   jail_record JailRecord
-  frozen bool
+  frozen map<Epoch, bool>
 }
 
 type Bond struct {
@@ -96,7 +96,7 @@ tx_become_validator(validator_address, consensus_key, staking_reward_address)
     validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
     validators[validator_address].jail_record = JailRecord{is_jailed: false, epoch: ⊥}
-    validators[validator_address].frozen = false
+    validators[validator_address].frozen[cur_epoch] = false
     //add validator to the inactive set
     add_validator_to_sets(validator_address, pipeline_length)
 
@@ -251,7 +251,8 @@ func bond(validator_address, delegator_address, amount)
 func unbond(validator_address, delegator_address, amount)
 {
   //disallow unbonding if the validator is frozen
-  if (is_validator(validator_address, cur_epoch+pipeline_length) && validators[validator_address].frozen == false) then
+  var frozen = read_epoched_field(validators[validator_address].frozen, cur_epoch, false)
+  if (is_validator(validator_address, cur_epoch+pipeline_length) && frozen == false) then
     //compute total bonds from delegator to validator
     var delbonds = compute_total_from_deltas(bonds[delegator_address][validator_address].deltas, cur_epoch + unbonding_length)
     //check if there are enough bonds
@@ -314,7 +315,7 @@ func new_evidence(evidence)
   remove_validator_from_sets(validator_address, 1)
   update_total_voting_power(1)
   //freeze validator to prevent delegators from altering their delegations (Step 1.3 of cubic slashing)
-  validators[validator_address].frozen = true
+  freeze_validator(validator_address)
 }
 ```
 
@@ -434,6 +435,19 @@ func update_validator_sets(validator_address, offset)
 ```
 
 ```go
+freeze_validator(validator_address)
+{
+  var epochs = {epoch | cur_epoch <= epoch <= cur_epoch+unbonding_length &&
+                        (epoch > cur_epoch => validators[validator_address].frozen[epoch] != ⊥)}
+  forall (epoch in epochs) do
+    var total = read_epoched_field(validators[validator_address].frozen, epoch, false)
+    validators[validator_address].frozen[epoch] = true
+  //schedule when to unfreeze the validator: after processing the enqueued slash
+  validators[validator_address].frozen[cur_epoch+unbonding_length+1] = false
+}
+```
+
+```go
 func is_validator(validator_address, epoch){
     return read_epoched_field(validators[validator_address].state, epoch, ⊥) != ⊥
 }
@@ -467,7 +481,10 @@ end_of_epoch()
       update_total_deltas(validator_address, 1, -1*slashed_amount)
       update_voting_power(validator_address, 1)
     //unfreeze the validator (Step 2.5 of cubic slashing)
-    validators[validator_address].frozen = false
+    //this step is done in advance when the evidence is found
+    //by setting validators[validator_address].frozen[cur_epoch+unbonding_length+1]=false
+    //note that this index could have been overwritten if more evidence for the same validator
+    //where found since then
   cur_epoch = cur_epoch + 1
 }
 ```
