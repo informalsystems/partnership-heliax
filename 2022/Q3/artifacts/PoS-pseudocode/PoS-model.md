@@ -21,6 +21,7 @@ type Validator struct {
   consensus_key map<Epoch, Key>
   state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
+  total_unbonds map<Epoch, amount:int>
   voting_power map<Epoch, VotingPower>
   reward_address Addr
   jail_record JailRecord
@@ -269,6 +270,7 @@ func unbond(validator_address, delegator_address, amount)
         unbonds[delegator_address][validator_address].deltas[(epoch_counter,cur_epoch+unbonding_length)] += unbond_amount
         remain -= unbond_amount
       bonds[delegator_address][validator_address].deltas[cur_epoch+unbonding_length] -= amount
+      validators[validator_address].total_unbonds[cur_epoch+unbonding_length] += amount
       update_total_deltas(validator_address, unbonding_length, -1*amount)
       update_voting_power(validator_address, unbonding_length)
       update_total_voting_power(unbonding_length)
@@ -476,10 +478,21 @@ end_of_epoch()
       slash.rate = rate
       append(slashes[validator_address], slash)
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
-      var slashed_amount = total_staked * slash.rate
-      //update voting power (Step 2.4 of cubic slashing)
-      update_total_deltas(validator_address, 1, -1*slashed_amount)
-      update_voting_power(validator_address, 1)
+
+      var total_unbonded = 0
+      //find the total unbonded from the slash epoch up to the current epoch first
+      forall (epoch in slash.epoch+1..cur_epoch+1) do
+        total_unbonded += validators[validator_address].total_unbonded[epoch]
+
+      var last_slash = 0
+      forall (offset in 1..unbonding_length) do
+        total_unbonded += validators[validator_address].total_unbonded[cur_epoch + offset]
+        var this_slash = (total_staked - total_unbonded) * slash.rate
+        var diff_slashed_amount = last_slash - this_slash
+        last_slash = this_slash
+        update_total_deltas(validator_address, offset, diff_slashed_amount)
+        update_voting_power(validator_address, offset)
+
     //unfreeze the validator (Step 2.5 of cubic slashing)
     //this step is done in advance when the evidence is found
     //by setting validators[validator_address].frozen[cur_epoch+unbonding_length+1]=false
