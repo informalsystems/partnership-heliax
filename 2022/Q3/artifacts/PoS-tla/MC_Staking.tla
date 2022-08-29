@@ -31,6 +31,10 @@ VARIABLES
     \*
     \* @type: TOTALDELTAS;
     totalDeltas,
+    \* Stake unbonded from a given validator at a given epoch.
+    \*
+    \* @type: TOTALUNBONDED;
+    totalUnbonded,
     \* PoS special account
     \*
     \* @type: Int;

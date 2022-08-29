@@ -13,6 +13,8 @@
 
   @typeAlias: TOTALDELTAS = <<Int, ADDR>> -> Int;
 
+  @typeAlias: TOTALUNBONDED = <<Int, ADDR>> -> Int;
+
   @typeAlias: SLASHES = ADDR -> Set(SLASH);
 
   @typeAlias: ENQUEUEDSLASHES = <<Int, ADDR>> -> Set(SLASH);
@@ -33,6 +35,7 @@
   @typeAlias: STATE = [
     balanceOf: BALANCE,
     totalDeltas: TOTALDELTAS,
+    totalUnbonded: TOTALUNBONDED,
     unbonded: UNBONDED,
     bonded: BONDED,
     slashes: SLASHES,
