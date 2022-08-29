@@ -267,14 +267,14 @@ func unbond(validator_address, delegator_address, amount)
         var bond = bonds[delegator_address][validator_address].deltas[epoch_counter]
         if bond > remain then var unbond_amount = remain
         else var unbond_amount = bond
-        unbonds[delegator_address][validator_address].deltas[(epoch_counter,cur_epoch+unbonding_length)] += unbond_amount
+        unbonds[delegator_address][validator_address].deltas[(epoch_counter,cur_epoch+pipeline_length+unbonding_length)] += unbond_amount
         remain -= unbond_amount
-      bonds[delegator_address][validator_address].deltas[cur_epoch+unbonding_length] -= amount
-      validators[validator_address].total_unbonds[cur_epoch+unbonding_length] += amount
-      update_total_deltas(validator_address, unbonding_length, -1*amount)
-      update_voting_power(validator_address, unbonding_length)
-      update_total_voting_power(unbonding_length)
-      update_validator_sets(validator_address, unbonding_length)
+      bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length+unbonding_length] -= amount
+      validators[validator_address].total_unbonds[cur_epoch+pipeline_length+unbonding_length] += amount
+      update_total_deltas(validator_address, pipeline_length, -1*amount)
+      update_voting_power(validator_address, pipeline_length)
+      update_total_voting_power(pipeline_length)
+      update_validator_sets(validator_address, pipeline_length)
 }
 ```
 
