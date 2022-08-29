@@ -183,21 +183,23 @@ TotalBonds(sender, validator) == LET
                                  F(total, bond) == total + bond.amount
                                  IN ApaFoldSet(F, 0, bonded[sender, validator])
 
-\* @type: (Set(BOND), Int, Int) => [ remaining: Int, set: Set(UNBOND), id: Int ];
+\* @type: (Set(BOND), Int, Int) => [ remaining: Int, unbonds: Set(UNBOND), bonds: Set(BOND), modifiedBond: Set(BOND), id: Int ];
 ComputedUnbonds(setBonds, totalAmount, e) == LET 
-                                         \* @type: ([ remaining: Int, set: Set(UNBOND), id: Int ], BOND) => [ remaining: Int, set: Set(UNBOND), id: Int ];
+                                         \* @type: ([ remaining: Int, unbonds: Set(UNBOND), bonds: Set(BOND), modifiedBond: Set(BOND), id: Int ], BOND) => [ remaining: Int, set: Set(UNBOND), id: Int ];
                                          F(record, bond) == 
-                                         IF record.remaining > 0
-                                         THEN 
+                                         IF record.remaining = 0
+                                         THEN record
+                                         ELSE 
                                           LET min == Min(record.remaining, bond.amount) 
-                                          IN
-                                          [ remaining |-> record.remaining - min,
-                                            set |-> record.set \union {[id |-> record.id, amount |-> min, start |-> bond.epoch, end |-> e]},
-                                            id |-> record.id + 1 ]   
-                                         ELSE [ remaining |-> 0,
-                                                set |-> record.set,
-                                                id |-> record.id ]
-                                        IN ApaFoldSet(F, [ remaining |-> totalAmount, set |-> {}, id |-> idUnbonds], setBonds)
+                                          IN [ remaining |-> record.remaining - min,
+                                               unbonds |-> record.unbonds \union {[id |-> record.id, amount |-> min, start |-> bond.epoch, end |-> e]},
+                                               bonds |-> record.bonds \union {bond},
+                                               modifiedBond |-> 
+                                                IF bond.amount = min
+                                                THEN {}
+                                                ELSE {[id |-> idBonds, amount |-> bond.amount - min, start |-> bond.epoch]},
+                                               id |-> record.id + 1 ]
+                                        IN ApaFoldSet(F, [ remaining |-> totalAmount, unbonds |-> {}, bonds |-> {}, modifiedBond |-> {}, id |-> idUnbonds], setBonds)
 
 \* Unbond `amount` tokens from a validator
 Unbond(sender, validator, amount) ==
@@ -216,14 +218,17 @@ Unbond(sender, validator, amount) ==
         THEN
           UNCHANGED <<unbonded, idUnbonds, bonded, idBonds, totalDeltas>>
         ELSE
-          LET newUnbonds == ComputedUnbonds(bonded[sender, validator], amount, epoch + UnbondingLength)
+          LET newUnbonds == ComputedUnbonds(bonded[sender, validator], amount, epoch + PipelineLength + UnbondingLength)
           IN
-          /\ unbonded' = [ unbonded EXCEPT ![sender, validator] = @ \union newUnbonds.set ]
+          /\ unbonded' = [ unbonded EXCEPT ![sender, validator] = @ \union newUnbonds.unbonds ]
           /\ idUnbonds' = newUnbonds.id
-          /\ bonded' = [ bonded EXCEPT ! [sender, validator] = @ \union {[ id |-> idBonds, epoch |-> epoch + UnbondingLength, amount |-> -1*amount ]}]
+          /\ bonded' = [ bonded EXCEPT ! [sender, validator] = (@ \ newUnbonds.bonds) \union newUnbonds.modifiedBond]
           /\ idBonds' = idBonds + 1
-          /\ totalDeltas' = [ totalDeltas EXCEPT ![UnbondingLength*2, validator] = @ - amount]
-
+          /\ totalDeltas' = [ n \in 0..2*UnbondingLength, val \in ValidatorAddrs |-> totalDeltas[n, val] - 
+                              IF n >= UnbondingLength + PipelineLength /\ val = validator
+                              THEN amount
+                              ELSE 0
+                            ]
 (*
 * For a given unbond, it computes the amount to be withdraw after applying a set of slashes.
 *)
