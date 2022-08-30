@@ -135,6 +135,7 @@ Init ==
                   ELSE {}
                 ]
     /\ totalDeltas = [ n \in 0..2*UnbondingLength, a \in ValidatorAddrs |-> INIT_VALIDATOR_STAKE ]
+    \* looks like totalUnbonded does not need to be this big. It's only updated at cur_epoch+pipeline_length.
     /\ totalUnbonded = [ n \in 0..2*UnbondingLength, a \in ValidatorAddrs |-> 0 ]
     /\ slashes = [ b \in ValidatorAddrs |-> {} ]
     /\ enqueuedSlashes = [ n \in -1..UnbondingLength, a \in ValidatorAddrs |-> {}] 
@@ -234,7 +235,7 @@ Unbond(sender, validator, amount) ==
                               THEN amount
                               ELSE 0
                             ]
-          /\ totalUnbonded' = [ totalUnbonded EXCEPT ! [2*UnbondingLength, validator] = @ + amount]
+          /\ totalUnbonded' = [ totalUnbonded EXCEPT ! [UnbondingLength + PipelineLength, validator] = @ + amount]
 (*
 * For a given unbond, it computes the amount to be withdraw after applying a set of slashes.
 *)
@@ -294,48 +295,82 @@ Evidence(e, validator) ==
 
 (*
 * Actual function that requires Real numbers
-* ComputeFinalSlashRateValidator(setSlashes) == LET F(total, slash) == total + slash.stake * slash.typeRate
-                                                IN 
-                                                 LET VotingPowerFraction == ApaFoldSet(F, 0, setSlashes)
-                                                 IN Min(0.01, Max(1, VotingPowerFraction*VotingPowerFraction*9))
+* FinalSlashRate(setSlashes) == LET F(total, slash) == total + slash.stake * slash.typeRate
+                                IN 
+                                 LET VotingPowerFraction == ApaFoldSet(F, 0, setSlashes)
+                                 IN Min(0.01, Max(1, VotingPowerFraction*VotingPowerFraction*9))
 *)
 
-ComputeFinalSlashRateValidator(setSlashes) == 1                                          
+FinalSlashRate(setSlashes) == 1                                          
 
 (*
-* ANTIPATTERN VARIANT
-* ComputeFinalSlashRates == LET F(list, val) ==
-*                            IF enqueuedSlashes[1, val] = {}
-*                            THEN list
-*                            ELSE [ list EXCEPT ![val] = ComputeFinalSlashRateValidator(enqueuedSlashes[0, val] \union enqueuedSlashes[1, val] \union enqueuedSlashes[2, val]) ]
-*                           IN ApaFoldSet(F, [ val \in ValidatorAddrs |-> -1 ], ValidatorAddrs)
+* For a given validator, aggregates totalUnbonds from epoch=initEpoch up to cur_epoch
+*
+* pseudocode PoS-model: @@ func end_of_epoch() 
+* var total_unbonded = 0
+* //find the total unbonded from the slash epoch up to the current epoch first
+* forall (epoch in slash.epoch..cur_epoch) do
+*   total_unbonded += validators[validator_address].total_unbonded[epoch]
 *)
+SumUnbonded(val, initEpoch) == LET F(total, n) == total + totalUnbonded[n, val]
+                               IN ApaFoldSet(F, 0, { x \in 0..UnbondingLength: initEpoch <= x /\ x <= UnbondingLength })
 
-ComputeFinalSlashRates == [ val \in ValidatorAddrs |->
-                            IF enqueuedSlashes[0, val] = {}
-                            THEN -1
-                            ELSE ComputeFinalSlashRateValidator(enqueuedSlashes[-1, val] \union enqueuedSlashes[0, val] \union enqueuedSlashes[1, val])
-                          ]
+(*
+* For a given validator with evidence to be processed at the end of cur_epoch, it computes the
+* slashable amount at every epoch >= cur_epoch + 1 and epoch <= cur_epoch + unbonding_length
+*
+* pseudocode PoS-model: @@ func end_of_epoch() 
+* var last_slash = 0
+* forall (offset in 1..unbonding_length) do
+*   total_unbonded += validators[validator_address].total_unbonded[cur_epoch + offset]
+*   var this_slash = (total_staked - total_unbonded) * slash.rate
+*   var diff_slashed_amount = last_slash - this_slash
+*   last_slash = this_slash
+*   update_total_deltas(validator_address, offset, diff_slashed_amount)
+*)
+\* @type: (Int, Int -> Int, ADDR, SLASH, Int) => [acc: Int, vector: Int -> Int];
+SlashableAmountPerSlash(accInit, vectorInit, val, slash, rate) == LET
+                                                                  \* @type: ([acc: Int, vector: Int -> Int], Int) => [acc: Int, vector: Int -> Int];
+                                                                  F(record, n) == 
+                                                                    LET sumUnbonded == record.acc + totalUnbonded[n, val]
+                                                                    IN [ acc |-> sumUnbonded,
+                                                                         vector |-> [ record.vector EXCEPT ![n] = @ + (slash.stake-sumUnbonded)*rate ] ]
+                                                                  IN ApaFoldSet(F, [acc |-> accInit, vector |-> vectorInit], UnbondingLength+1..2*UnbondingLength)
 
+(*
+* For a given validator with evidence to be processed at the end of cur_epoch, it computes the
+* slashable amount at every epoch >= cur_epoch + 1 and epoch <= cur_epoch + unbonding_length
+*)
+\* @type: (ADDR, Int, Set(SLASH)) => Int -> Int;
+SlashableAmountForVal(val, rate, setSlashes) == LET
+                                                \* @type: (Int -> Int, SLASH) => Int -> Int;
+                                                F(acc, slash) ==  SlashableAmountPerSlash(SumUnbonded(val, EpochToIndexTotalVariables(slash.epoch)),
+                                                                                          acc,
+                                                                                          val,
+                                                                                          slash,
+                                                                                          rate).vector
+                                                IN ApaFoldSet(F, [ n \in UnbondingLength+1..2*UnbondingLength |-> 0], setSlashes)
 
-\* @type: (ADDR, Int, Set(SLASH)) => Int;
-AccumulateSlashes(val, rate, setSlashes) == LET
-                                             \* @type: (Int, SLASH) => Int;
-                                             F(total, slash) == total + slash.stake * rate
-                                            IN ApaFoldSet(F, 0, setSlashes)
-
+(*
+* For all validators with evidence to be processed at the end of cur_epoch, it 
+* computes the slashable amount at every epoch >= cur_epoch + 1 and epoch <= cur_epoch + unbonding_length
+*)
+SlashableAmountForAll == LET F(amounts, val) ==
+                          LET vector == SlashableAmountForVal(val,
+                                                              FinalSlashRate(enqueuedSlashes[-1, val] \union enqueuedSlashes[0, val] \union enqueuedSlashes[1, val]),
+                                                              enqueuedSlashes[0, val]) 
+                          IN [n \in UnbondingLength+1..2*UnbondingLength, a \in ValidatorAddrs |-> 
+                               IF a = val
+                               THEN vector[n]
+                               ELSE amounts[n, a]
+                             ]
+                         IN ApaFoldSet(F, [ n \in UnbondingLength+1..2*UnbondingLength, a \in ValidatorAddrs |-> 0 ], { val \in ValidatorAddrs: enqueuedSlashes[0, val] /= {} })
 
 (*
 * For a set of enqueued slashes, it assigns it its final rate.
 *)
 \* @type: (Set(SLASH), Int) => Set(SLASH);
 CreateSlashes(setSlashes, rate) == {} \union { [slash EXCEPT !.finalRate = rate]: slash \in setSlashes }
-
-(*
-* ANTIPATTERN VARIANT
-* CreateSlashes(setSlashes, rate) == LET F(set, slash) == set \union { [slash EXCEPT !.finalRate = rate] }
-*                                    IN ApaFoldSet(F, {}, setSlashes)
-*)
 
 (*
 * At the end of an epoch e:
@@ -347,18 +382,15 @@ CreateSlashes(setSlashes, rate) == {} \union { [slash EXCEPT !.finalRate = rate]
 * 5. Increment epoch.
 *)
 EndOfEpoch ==
-    LET FinalRates == ComputeFinalSlashRates
+    LET penaltyValEpoch == SlashableAmountForAll
     IN
     /\ totalDeltas' = [ n \in 0..2*UnbondingLength, val \in ValidatorAddrs |-> 
                         IF n < 2*UnbondingLength
-                        THEN 
-                          IF enqueuedSlashes[0, val] /= {} /\ n >= UnbondingLength + 1
-                          THEN totalDeltas[n+1, val] - AccumulateSlashes(val, FinalRates[val], enqueuedSlashes[0, val])
+                        THEN
+                          IF n >= UnbondingLength + 1
+                          THEN totalDeltas[n+1, val] - penaltyValEpoch[n+1, val]
                           ELSE totalDeltas[n+1, val]
-                        ELSE 
-                          IF enqueuedSlashes[0, val] /= {}
-                          THEN totalDeltas[n, val] - AccumulateSlashes(val, FinalRates[val], enqueuedSlashes[0, val])
-                          ELSE totalDeltas[n, val]
+                        ELSE totalDeltas[n, val] - penaltyValEpoch[n, val]
                       ]
     /\ totalUnbonded' = [ n \in 0..2*UnbondingLength, val \in ValidatorAddrs |-> 
                           IF n < 2*UnbondingLength
@@ -375,7 +407,8 @@ EndOfEpoch ==
                             THEN frozenValidators[n+1]
                             ELSE {}
                           ]
-    /\ slashes' = [ val \in ValidatorAddrs |-> slashes[val] \union CreateSlashes(enqueuedSlashes[0, val], FinalRates[val]) ]
+    /\ slashes' = [ val \in ValidatorAddrs |-> slashes[val] \union CreateSlashes(enqueuedSlashes[0, val],
+                                                                                 FinalSlashRate(enqueuedSlashes[-1, val] \union enqueuedSlashes[0, val] \union enqueuedSlashes[1, val])) ]
     /\ epoch' = epoch + 1
     /\ lastTx' = [ id |-> nextTxId, tag |-> "endOfEpoch", fail |-> FALSE,
                    sender |-> "", toAddr |-> "", value |-> epoch ]

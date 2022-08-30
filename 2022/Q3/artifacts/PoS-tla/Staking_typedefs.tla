@@ -33,6 +33,7 @@
 
   A state of the state machine:
   @typeAlias: STATE = [
+    lastTx: TX,
     balanceOf: BALANCE,
     totalDeltas: TOTALDELTAS,
     totalUnbonded: TOTALUNBONDED,
@@ -40,7 +41,6 @@
     bonded: BONDED,
     slashes: SLASHES,
     enqueuedSlashes: ENQUEUEDSLASHES,
-    lastTx: TX,
     nextTxId: Int,
     failed: Bool
   ];
