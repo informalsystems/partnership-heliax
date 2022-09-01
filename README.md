@@ -1,5 +1,5 @@
 ---
-visibility: PRIVATE
+visibility: PUBLIC
 ---
 
 # Partnership Workspace _of_ Informal Systems ⨯ Heliax
