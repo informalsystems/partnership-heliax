@@ -158,6 +158,8 @@ HighCoverage(trace) ==
     IN
     ~Example
 
+\* PoS invariants
+
 \* From Chris
 \* Try to capture that for a group of validators with total voting power X at
 \* a particular height, the proof-of-stake model provides the ability to look up
