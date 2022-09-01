@@ -7,11 +7,19 @@
 
   @typeAlias: BALANCE = ADDR -> Int;
 
-  @typeAlias: UNBONDED = <<Int, ADDR>> -> Int;
+  @typeAlias: UNBONDED = <<ADDR, ADDR>> -> Set(UNBOND);
 
-  @typeAlias: BONDED = <<Int, ADDR>> -> Int;
+  @typeAlias: BONDED = <<ADDR, ADDR>> -> Set(BOND);
 
-  @typeAlias: DELEGATED = <<Int, ADDR, ADDR>> -> Int;
+  @typeAlias: TOTALDELTAS = <<Int, ADDR>> -> Int;
+
+  @typeAlias: TOTALUNBONDED = <<Int, ADDR>> -> Int;
+
+  @typeAlias: SLASHES = ADDR -> Set(SLASH);
+
+  @typeAlias: ENQUEUEDSLASHES = <<Int, ADDR>> -> Set(SLASH);
+
+  @typeAlias: FROZEN = Int -> Set(ADDR);
 
   A transaction (a la discriminated union but all fields are packed together):
   @typeAlias: TX = [
@@ -25,13 +33,37 @@
 
   A state of the state machine:
   @typeAlias: STATE = [
+    lastTx: TX,
     balanceOf: BALANCE,
-    delegated: DELEGATED,
+    totalDeltas: TOTALDELTAS,
+    totalUnbonded: TOTALUNBONDED,
     unbonded: UNBONDED,
     bonded: BONDED,
-    lastTx: TX,
+    slashes: SLASHES,
+    enqueuedSlashes: ENQUEUEDSLASHES,
     nextTxId: Int,
     failed: Bool
+  ];
+
+  @typeAlias: BOND = [
+    id: Int,
+    amount: Int,
+    epoch: Int
+  ];
+
+  @typeAlias: UNBOND = [
+    id: Int,
+    amount: Int,
+    start: Int,
+    end: Int
+  ];
+
+  @typeAlias: SLASH = [
+    id: Int,
+    epoch: Int,
+    stake: Int,
+    typeRate: Int,
+    finalRate: Int
   ];
 
   Below is a dummy definition to introduce the above type aliases.
