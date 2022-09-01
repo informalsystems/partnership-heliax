@@ -110,6 +110,56 @@ NoEvidence ==
     IN
     ~Example
 
+(* 
+* It generates a trace with high coverage
+*
+* Use it with UnbondingLength and PipelineLength equal to 1 and 
+* UserAddrs == { "user2", "user3", "val1", "val2"}
+* ValidatorAddrs == {"val1", "val2"}
+* PipelineLength == 1
+* UnbondingLength == 1
+* TxsEpoch == 1
+*)
+\* @type: Seq(STATE) => Bool;
+HighCoverage(trace) ==
+    \* trace[1] is the initial state
+    LET state1 == trace[2] IN
+    LET state2 == trace[3] IN
+    LET state3 == trace[4] IN
+    LET state4 == trace[5] IN
+    LET state5 == trace[6] IN
+    LET state6 == trace[7] IN
+    LET Example ==
+        \* epoch 2
+        /\ state1.lastTx.tag = "unbond"
+        /\ state1.lastTx.sender = "val1"
+        /\ state1.lastTx.toAddr = "val1"
+        /\ state1.lastTx.value > 0
+        /\ ~state1.lastTx.fail
+        /\ state2.lastTx.tag = "endOfEpoch"
+        \* epoch 3
+        /\ state3.lastTx.tag = "evidence"
+        /\ state3.lastTx.sender = "val1"
+        \* at initial epoch
+        /\ state3.lastTx.value = 2
+        /\ ~state3.lastTx.fail
+        /\ state4.lastTx.tag = "delegate"
+        /\ state4.lastTx.sender = "user2"
+        /\ state4.lastTx.toAddr = "val2"
+        /\ ~state4.lastTx.fail
+        \* the evidence is processed
+        /\ state5.lastTx.tag = "endOfEpoch"
+        \* epoch 4
+        \* tokens ready to be withdrawn
+        /\ state6.lastTx.tag = "withdraw"
+        /\ state6.lastTx.sender = "val1"
+        /\ state6.lastTx.toAddr = "val1"
+        /\ ~state6.lastTx.fail
+    IN
+    ~Example
+
+\* PoS invariants
+
 \* From Chris
 \* Try to capture that for a group of validators with total voting power X at
 \* a particular height, the proof-of-stake model provides the ability to look up

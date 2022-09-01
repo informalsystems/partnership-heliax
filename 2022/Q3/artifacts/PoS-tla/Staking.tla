@@ -83,6 +83,7 @@ VARIABLES
     \* @type: Int;
     txCounter,
     \* A serial number used to identify epochs
+    \* cur_epoch in pseudocode
     \* @type: Int;
     epoch,
     \* A serial number used to identify bonds
@@ -108,7 +109,7 @@ INITIAL_SUPPLY == 10^(9+18)
 \* @type: () => Int;
 INIT_VALIDATOR_STAKE == 1000000000000000000000
 
-\* the amount of voting power per token
+\* the slash rate for any infraction
 SLASH_RATE == 1
 
 (*
@@ -134,12 +135,18 @@ Init ==
                   THEN { [ id |-> 0, epoch |-> 1, amount |-> INIT_VALIDATOR_STAKE ] }
                   ELSE {}
                 ]
+    /\ slashes = [ b \in ValidatorAddrs |-> {} ]
+    \* Begin epoched variables
+    \* range [cur_epoch-unbonding_length..cur_epoch+unbonding_length]
     /\ totalDeltas = [ n \in 0..2*UnbondingLength, a \in ValidatorAddrs |-> INIT_VALIDATOR_STAKE ]
     \* looks like totalUnbonded does not need to be this big. It's only updated at cur_epoch+pipeline_length.
+    \* range [cur_epoch-unbonding_length..cur_epoch+unbonding_length]
     /\ totalUnbonded = [ n \in 0..2*UnbondingLength, a \in ValidatorAddrs |-> 0 ]
-    /\ slashes = [ b \in ValidatorAddrs |-> {} ]
+    \* range [cur_epoch-1..cur_epoch+unbonding_length]
     /\ enqueuedSlashes = [ n \in -1..UnbondingLength, a \in ValidatorAddrs |-> {}] 
+    \* range [cur_epoch..cur_epoch+unbonding_length]
     /\ frozenValidators = [ n \in 0..UnbondingLength |-> {} ]
+    \* End epoched variables
     /\ posAccount = Cardinality(ValidatorAddrs) * INIT_VALIDATOR_STAKE
     /\ nextTxId = 0
     /\ epoch = UnbondingLength + 1
@@ -387,7 +394,7 @@ EndOfEpoch ==
     /\ totalDeltas' = [ n \in 0..2*UnbondingLength, val \in ValidatorAddrs |-> 
                         IF n < 2*UnbondingLength
                         THEN
-                          IF n >= UnbondingLength + 1
+                          IF n >= UnbondingLength
                           THEN totalDeltas[n+1, val] - penaltyValEpoch[n+1, val]
                           ELSE totalDeltas[n+1, val]
                         ELSE totalDeltas[n, val] - penaltyValEpoch[n, val]
