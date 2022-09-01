@@ -109,7 +109,11 @@ INITIAL_SUPPLY == 10^(9+18)
 \* @type: () => Int;
 INIT_VALIDATOR_STAKE == 1000000000000000000000
 
+<<<<<<< HEAD
 \* the slash rate for any infraction
+=======
+\* the amount of voting power per token
+>>>>>>> 61be718671bfa31d895de8f0931ebddc33359864
 SLASH_RATE == 1
 
 (*

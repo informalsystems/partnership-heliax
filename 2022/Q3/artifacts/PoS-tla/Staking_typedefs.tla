@@ -33,6 +33,7 @@
 
   A state of the state machine:
   @typeAlias: STATE = [
+    lastTx: TX,
     balanceOf: BALANCE,
     unbonded: UNBONDED,
     bonded: BONDED,
