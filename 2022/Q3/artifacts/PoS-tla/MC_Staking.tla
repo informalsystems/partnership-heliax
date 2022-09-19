@@ -167,27 +167,32 @@ HighCoverage(trace) ==
 \* a proportional amount of stake to X (subject to limitations e.g. repeated infractions)
 
 \* Invariant #1
-\* the validator's voting power at a given epoch is equal to the total amount of
-\* tokens delegated to that validator
-
-(* ValDelegatedFold(set, val) == LET SumDelegated(p,q) == p + delegated[1, q, val]
-                              IN ApaFoldSet( SumDelegated, 0, set )
-
-VotingpowerDelagations ==
-    \A val \in ValidatorAddrs:
-    ValDelegatedFold(UserAddrs, val) = bonded[1, val] *)
-
-\* Invariant #2
 \* the user balance is always greater or equal to zero
 
 BalanceAlwaysPositive == 
     \A user \in UserAddrs: balanceOf[user] >= 0
 
 
-\* Invariant #3
+\* Invariant #2
 \* posAccount is always greater or equal to zero
 
 PoSAccountAlwaysPositive == 
     posAccount >= 0
+
+\* Invariant #3
+\* the validator's voting power at a given epoch is equal to the total amount of
+\* tokens delegated to that validator
+
+SumBondsUser(user, val) == LET
+                            \* @type: (Int, BOND) => Int;    
+                            F(sum, bond) == sum + bond.amount
+                           IN ApaFoldSet(F, 0, { b \in bonded[user, val]: b.epoch <= epoch })
+
+TotalSumBonds(val) == LET F(sum, user) == sum + SumBondsUser(user, val)
+                      IN ApaFoldSet(F, 0, UserAddrs)
+
+VotingpowerDelagations ==
+    \A val \in ValidatorAddrs:
+    TotalSumBonds(val) = totalDeltas[UnbondingLength, val]
 
 ===============================================================================
