@@ -182,6 +182,7 @@ PoSAccountAlwaysPositive ==
 \* Invariant #3
 \* the validator's voting power at a given epoch is equal to the total amount of
 \* tokens delegated to that validator
+\* this is not true anymore given the fix for https://github.com/informalsystems/partnership-heliax/issues/24
 
 SumBondsUser(user, val) == LET
                             \* @type: (Int, BOND) => Int;    
