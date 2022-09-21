@@ -40,6 +40,7 @@
     totalDeltas: TOTALDELTAS,
     totalUnbonded: TOTALUNBONDED,
     posAccount: Int,
+    slashPool: Int,
     slashes: SLASHES,
     enqueuedSlashes: ENQUEUEDSLASHES,
     frozenValidators: FROZEN,
@@ -56,7 +57,8 @@
   @typeAlias: BOND = [
     id: Int,
     amount: Int,
-    epoch: Int
+    start: Int,
+    end: Int
   ];
 
   @typeAlias: UNBOND = [

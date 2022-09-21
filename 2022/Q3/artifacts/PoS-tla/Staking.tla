@@ -56,6 +56,10 @@ VARIABLES
     \*
     \* @type: Int;
     posAccount,
+    \* Slashed special account
+    \*
+    \* @type: Int;
+    slashPool,
     \* Slashes
     \*
     \* @type: SLASHES;
@@ -132,7 +136,7 @@ Init ==
     /\ unbonded = [ a \in UserAddrs, b \in ValidatorAddrs |-> {} ]
     /\ bonded = [ a \in UserAddrs, b \in ValidatorAddrs |->
                   IF a = b
-                  THEN { [ id |-> 0, epoch |-> 1, amount |-> INIT_VALIDATOR_STAKE ] }
+                  THEN { [ id |-> 0, start |-> 1, amount |-> INIT_VALIDATOR_STAKE, end |-> -1] }
                   ELSE {}
                 ]
     /\ slashes = [ b \in ValidatorAddrs |-> {} ]
@@ -148,6 +152,7 @@ Init ==
     /\ frozenValidators = [ n \in 0..UnbondingLength |-> {} ]
     \* End epoched variables
     /\ posAccount = Cardinality(ValidatorAddrs) * INIT_VALIDATOR_STAKE
+    /\ slashPool = 0
     /\ nextTxId = 0
     /\ epoch = UnbondingLength + 1
     /\ txCounter = 0
@@ -168,7 +173,7 @@ Delegate(sender, validator, amount) ==
     /\ failed' = (fail \/ failed)
     /\ nextTxId' = nextTxId + 1
     /\ txCounter' = txCounter + 1
-    /\ UNCHANGED <<epoch, totalUnbonded, unbonded, idUnbonds, slashes, idSlashes, enqueuedSlashes, frozenValidators>>
+    /\ UNCHANGED <<epoch, totalUnbonded, slashPool, unbonded, idUnbonds, slashes, idSlashes, enqueuedSlashes, frozenValidators>>
     /\  IF fail
         THEN
           UNCHANGED <<balanceOf, posAccount, bonded, idBonds, totalDeltas>>
@@ -178,8 +183,9 @@ Delegate(sender, validator, amount) ==
           /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ - amount]
           /\ posAccount' = posAccount + amount
           /\ bonded' = [ bonded EXCEPT ![sender, validator] = @ \union {[ id |-> idBonds,
-                                                                          epoch |-> epoch + PipelineLength,
-                                                                          amount |-> amount ]}]
+                                                                          start |-> epoch + PipelineLength,
+                                                                          amount |-> amount,
+                                                                          end |-> -1]}]
           /\ idBonds' = idBonds + 1
           \* updates totalDeltas from PipelineLength to UnbondingLength 
           /\ totalDeltas' = [ n \in 0..2*UnbondingLength, val \in ValidatorAddrs |-> totalDeltas[n, val] + 
@@ -194,7 +200,7 @@ Delegate(sender, validator, amount) ==
 TotalBonds(sender, validator) == LET 
                                  \* @type: (Int, BOND) => Int;
                                  F(total, bond) == total + bond.amount
-                                 IN ApaFoldSet(F, 0, bonded[sender, validator])
+                                 IN ApaFoldSet(F, 0, {b \in bonded[sender, validator]: b.end = -1})
 
 \* @type: (Set(BOND), Int, Int) => [ remaining: Int, unbonds: Set(UNBOND), bonds: Set(BOND), modifiedBond: Set(BOND), id: Int ];
 ComputedUnbonds(setBonds, totalAmount, e) == LET 
@@ -205,14 +211,14 @@ ComputedUnbonds(setBonds, totalAmount, e) == LET
                                          ELSE 
                                           LET min == Min(record.remaining, bond.amount) 
                                           IN [ remaining |-> record.remaining - min,
-                                               unbonds |-> record.unbonds \union {[id |-> record.id, amount |-> min, start |-> bond.epoch, end |-> e]},
-                                               bonds |-> record.bonds \union {bond},
-                                               modifiedBond |-> 
+                                               unbonds |-> record.unbonds \union {[id |-> record.id, amount |-> min, start |-> bond.start, end |-> e]},
+                                               bondsToRemove |-> record.bondsToRemove \union {bond},
+                                               bondsToAdd |-> record.bondsToAdd \union {[id |-> bond.id, amount |-> min, start |-> bond.start, end |-> epoch + PipelineLength]} \union
                                                 IF bond.amount = min
                                                 THEN {}
-                                                ELSE {[id |-> idBonds, amount |-> bond.amount - min, start |-> bond.epoch]},
+                                                ELSE {[id |-> idBonds, amount |-> bond.amount - min, start |-> bond.start, end |-> -1]},
                                                id |-> record.id + 1 ]
-                                        IN ApaFoldSet(F, [ remaining |-> totalAmount, unbonds |-> {}, bonds |-> {}, modifiedBond |-> {}, id |-> idUnbonds], setBonds)
+                                        IN ApaFoldSet(F, [ remaining |-> totalAmount, unbonds |-> {}, bondsToRemove |-> {}, bondsToAdd |-> {}, id |-> idUnbonds], setBonds)
 
 \* Unbond `amount` tokens from a validator
 Unbond(sender, validator, amount) ==
@@ -226,16 +232,16 @@ Unbond(sender, validator, amount) ==
     /\ failed' = (fail \/ failed)
     /\ nextTxId' = nextTxId + 1
     /\ txCounter' = txCounter + 1
-    /\ UNCHANGED <<epoch, balanceOf, posAccount, slashes, idSlashes, enqueuedSlashes, frozenValidators>>
+    /\ UNCHANGED <<epoch, balanceOf, posAccount, slashPool, slashes, idSlashes, enqueuedSlashes, frozenValidators>>
     /\  IF fail
         THEN
           UNCHANGED <<unbonded, idUnbonds, bonded, idBonds, totalDeltas, totalUnbonded>>
         ELSE
-          LET newUnbonds == ComputedUnbonds(bonded[sender, validator], amount, epoch + PipelineLength + UnbondingLength)
+          LET recordComputeUnbonds == ComputedUnbonds({bond \in bonded[sender, validator]: bond.end = -1}, amount, epoch + PipelineLength + UnbondingLength)
           IN
-          /\ unbonded' = [ unbonded EXCEPT ![sender, validator] = @ \union newUnbonds.unbonds ]
-          /\ idUnbonds' = newUnbonds.id
-          /\ bonded' = [ bonded EXCEPT ! [sender, validator] = (@ \ newUnbonds.bonds) \union newUnbonds.modifiedBond]
+          /\ unbonded' = [ unbonded EXCEPT ![sender, validator] = @ \union recordComputeUnbonds.unbonds ]
+          /\ idUnbonds' = recordComputeUnbonds.id
+          /\ bonded' = [ bonded EXCEPT ! [sender, validator] = (@ \ recordComputeUnbonds.bondsToRemove) \union recordComputeUnbonds.bondsToAdd]
           /\ idBonds' = idBonds + 1
           /\ totalDeltas' = [ n \in 0..2*UnbondingLength, val \in ValidatorAddrs |-> totalDeltas[n, val] - 
                               IF n >= UnbondingLength + PipelineLength /\ val = validator
@@ -275,7 +281,7 @@ Withdraw(sender, validator) ==
      /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ + amountAfterSlashing]
      /\ posAccount' = posAccount - amountAfterSlashing
      /\ unbonded' = [ unbonded EXCEPT ![sender, validator] = @ \ setUnbonds ]
-     /\ UNCHANGED  <<epoch, totalDeltas, totalUnbonded, bonded, idBonds, idUnbonds, slashes, idSlashes, enqueuedSlashes, frozenValidators, failed>>
+     /\ UNCHANGED  <<epoch, totalDeltas, totalUnbonded, slashPool, bonded, idBonds, idUnbonds, slashes, idSlashes, enqueuedSlashes, frozenValidators, failed>>
 
 (*
 * Computes the index of totalDeltas and totalUnbonded given an epoch e.
@@ -298,7 +304,7 @@ Evidence(e, validator) ==
     /\ frozenValidators' = [ n \in 0..UnbondingLength |-> frozenValidators[n] \union {validator} ]
     /\ lastTx' = [ id |-> nextTxId, tag |-> "evidence", fail |-> FALSE,
                    sender |-> validator, toAddr |-> validator, value |-> e ]
-    /\ UNCHANGED <<epoch, balanceOf, posAccount, totalDeltas, totalUnbonded, bonded, idBonds, unbonded, idUnbonds, slashes, nextTxId, txCounter, failed>>
+    /\ UNCHANGED <<epoch, balanceOf, posAccount, slashPool, totalDeltas, totalUnbonded, bonded, idBonds, unbonded, idUnbonds, slashes, nextTxId, txCounter, failed>>
 
 (*
 * Actual function that requires Real numbers
@@ -379,6 +385,15 @@ SlashableAmountForAll == LET F(amounts, val) ==
 \* @type: (Set(SLASH), Int) => Set(SLASH);
 CreateSlashes(setSlashes, rate) == {} \union { [slash EXCEPT !.finalRate = rate]: slash \in setSlashes }
 
+\* @type: (Set(SLASH)) => Int;
+TotalSlashedAmountPerValidator(setSlashes) == LET 
+                                              \* @type: (Int, SLASH) => Int;
+                                              F(total, slash) == total + slash.stake*slash.finalRate
+                                              IN ApaFoldSet(F, 0, setSlashes)
+\* @type: (ADDR -> Set(SLASH)) => Int;
+TotalSlashedAmount(setSlashesIndexed) == LET F(total, val) == total + TotalSlashedAmountPerValidator(setSlashesIndexed[val])
+                                         IN ApaFoldSet(F, 0, ValidatorAddrs)
+
 (*
 * At the end of an epoch e:
 * 1. We compute the final slash rates. For each validator with enqueued slashes schedules
@@ -389,8 +404,11 @@ CreateSlashes(setSlashes, rate) == {} \union { [slash EXCEPT !.finalRate = rate]
 * 5. Increment epoch.
 *)
 EndOfEpoch ==
-    LET penaltyValEpoch == SlashableAmountForAll
-    IN
+    LET penaltyValEpoch == SlashableAmountForAll IN
+    LET newSlashes == [ val \in ValidatorAddrs |-> 
+                        CreateSlashes(enqueuedSlashes[0, val],
+                                      FinalSlashRate(enqueuedSlashes[-1, val] \union enqueuedSlashes[0, val] \union enqueuedSlashes[1, val])) ] IN
+    LET totalSlashed == TotalSlashedAmount(newSlashes) IN
     /\ totalDeltas' = [ n \in 0..2*UnbondingLength, val \in ValidatorAddrs |-> 
                         IF n < 2*UnbondingLength
                         THEN
@@ -414,13 +432,14 @@ EndOfEpoch ==
                             THEN frozenValidators[n+1]
                             ELSE {}
                           ]
-    /\ slashes' = [ val \in ValidatorAddrs |-> slashes[val] \union CreateSlashes(enqueuedSlashes[0, val],
-                                                                                 FinalSlashRate(enqueuedSlashes[-1, val] \union enqueuedSlashes[0, val] \union enqueuedSlashes[1, val])) ]
+    /\ slashes' = [ val \in ValidatorAddrs |-> slashes[val] \union newSlashes[val]]
     /\ epoch' = epoch + 1
     /\ lastTx' = [ id |-> nextTxId, tag |-> "endOfEpoch", fail |-> FALSE,
                    sender |-> "", toAddr |-> "", value |-> epoch ]
     /\ txCounter' = 0
-    /\ UNCHANGED <<balanceOf, posAccount, bonded, idBonds, unbonded, idUnbonds, idSlashes, nextTxId, failed>>
+    /\ posAccount' = posAccount - totalSlashed
+    /\ slashPool' = slashPool + totalSlashed
+    /\ UNCHANGED <<balanceOf, bonded, idBonds, unbonded, idUnbonds, idSlashes, nextTxId, failed>>
 
 Next ==
     IF txCounter = TxsEpoch
@@ -442,7 +461,7 @@ Next ==
                   /\ e > 0 
                   /\ Evidence(e, validator)
               ELSE
-                UNCHANGED <<epoch, totalDeltas, totalUnbonded, balanceOf, posAccount, bonded, idBonds, unbonded, idUnbonds,
+                UNCHANGED <<epoch, totalDeltas, totalUnbonded, balanceOf, posAccount, slashPool, bonded, idBonds, unbonded, idUnbonds,
                             slashes, enqueuedSlashes, idSlashes, frozenValidators, nextTxId,
                             failed, lastTx, txCounter>>
            \/ Delegate(sender, validator, amount)
