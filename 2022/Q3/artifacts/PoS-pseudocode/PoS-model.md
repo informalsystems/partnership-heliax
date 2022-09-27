@@ -249,7 +249,7 @@ func bond(validator_address, delegator_address, amount)
     conclusion: it is an actual issue, unresolved
 */
 //This function is called by transactions tx_unbond, tx_undelegate and tx_redelegate
-func unbond(validator_address, delegator_address, amount)
+func unbond(validator_address, delegator_address, unbond_amount)
 {
   //disallow unbonding if the validator is frozen
   var frozen = read_epoched_field(validators[validator_address].frozen, cur_epoch, false)
@@ -258,24 +258,23 @@ func unbond(validator_address, delegator_address, amount)
     var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[(start, inf)] > 0 && start <= cur_epoch + unbonding_length}
     //check if there are enough bonds
     //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
-    if (sum{amount | <start, amount> in delbonds} >= amount) then
-      var remain = amount
-      //Decrement bond deltas and create unbonds
+    if (sum{amount | <start, amount> in delbonds} >= unbond_amount) then
+      var remain = unbond_amount
+      //Iterate over bonds and create unbond
       forall (<start,amount> in delbonds) do
         //If the next bond amount is greater than the remaining
         if amount > remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start, inf] = amount - remain
           bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = amount
-          unbonds[delegator_address][validator_address].deltas[(start,cur_epoch+pipeline_length+unbonding_length)] += remain
           remain = 0
         //If the remaining is greater or equal than the next bond amount
         else if amount <= remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start, inf] = 0
           bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = amount
-          unbonds[delegator_address][validator_address].deltas[(start,cur_epoch+pipeline_length+unbonding_length)] += amount
           remain -= amount
-      validators[validator_address].total_unbonds[cur_epoch+pipeline_length+unbonding_length] += amount
-      update_total_deltas(validator_address, pipeline_length, -1*amount)
+      unbonds[delegator_address][validator_address].deltas[(start,cur_epoch+pipeline_length+unbonding_length)] += unbond_amount
+      validators[validator_address].total_unbonds[cur_epoch+pipeline_length+unbonding_length] += unbond_amount
+      update_total_deltas(validator_address, pipeline_length, -1*unbond_amount)
       update_voting_power(validator_address, pipeline_length)
       update_total_voting_power(pipeline_length)
       update_validator_sets(validator_address, pipeline_length)
