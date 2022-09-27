@@ -266,7 +266,7 @@ func unbond(validator_address, delegator_address, unbond_amount)
         //If the next bond amount is greater than the remaining
         if amount > remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start, ⊥] = amount - remain
-          bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = amount
+          bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = remain
           remain = 0
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= remain*slash.rate
