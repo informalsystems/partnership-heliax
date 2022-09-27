@@ -31,7 +31,7 @@ type Validator struct {
 type Bond struct {
   validator Addr //not used
   source Addr //not used
-  deltas map<Epoch, int>
+  deltas map<(start:Epoch, end:epoch) int>
 }
 
 type Unbond struct {
@@ -224,7 +224,7 @@ func bond(validator_address, delegator_address, amount)
 {
   if is_validator(validator_address, cur_epoch+pipeline_length) then
     //add amount bond to delta at n+pipeline_length
-    bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length] += amount
+    bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length, inf] += amount
     //debit amount from delegator account and credit it to the PoS account
     balances[delegator_address] -= amount
     balances[pos] += amount
@@ -255,21 +255,20 @@ func unbond(validator_address, delegator_address, amount)
   var frozen = read_epoched_field(validators[validator_address].frozen, cur_epoch, false)
   if (is_validator(validator_address, cur_epoch+pipeline_length) && frozen == false) then
     //compute total bonds from delegator to validator
-    var delbonds = compute_total_from_deltas(bonds[delegator_address][validator_address].deltas, cur_epoch + unbonding_length)
+    var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[(start, inf)] > 0 && start <= cur_epoch + unbonding_length}
     //check if there are enough bonds
     //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
-    if (delbonds >= amount) then
-      //Decrement bond deltas and create unbonds
+    if (sum{amount | <start, amount> in delbonds} >= amount) then
       var remain = amount
-      var epoch_counter = cur_epoch + unbonding_length + 1
-      while remain > 0 do
-        epoch_counter = max{epoch | bonds[delegator_address][validator_address].deltas[epoch] > 0 && epoch < epoch_counter}
-        var bond = bonds[delegator_address][validator_address].deltas[epoch_counter]
-        if bond > remain then var unbond_amount = remain
-        else var unbond_amount = bond
-        unbonds[delegator_address][validator_address].deltas[(epoch_counter,cur_epoch+pipeline_length+unbonding_length)] += unbond_amount
-        remain -= unbond_amount
-      bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length+unbonding_length] -= amount
+      //Decrement bond deltas and create unbonds
+      forall (<start,amount> in delbonds) do
+        if amount > remain && remain > 0 do
+          bonds[delegator_address][validator_address].deltas[start, inf] = amount - remain
+          unbonds[delegator_address][validator_address].deltas[(start,cur_epoch+pipeline_length+unbonding_length)] += remain
+        else if amount <= remain && remain > 0 do
+          bonds[delegator_address][validator_address].deltas[start, inf] = 0
+          unbonds[delegator_address][validator_address].deltas[(start,cur_epoch+pipeline_length+unbonding_length)] += amount
+        bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = amount
       validators[validator_address].total_unbonds[cur_epoch+pipeline_length+unbonding_length] += amount
       update_total_deltas(validator_address, pipeline_length, -1*amount)
       update_voting_power(validator_address, pipeline_length)
