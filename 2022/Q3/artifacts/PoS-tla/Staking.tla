@@ -220,6 +220,19 @@ ComputedUnbonds(setBonds, totalAmount, e) == LET
                                                id |-> record.id + 1 ]
                                         IN ApaFoldSet(F, [ remaining |-> totalAmount, unbonds |-> {}, bondsToRemove |-> {}, bondsToAdd |-> {}, id |-> idUnbonds], setBonds)
 
+\* @type: (Int, Set(SLASH)) => Int;
+BondAfterSlashing(amount, setSlashes) == LET
+                                         \* @type: (Int, SLASH) => Int;
+                                         F(total, slash) == total + (amount - amount*slash.finalRate)
+                                         IN ApaFoldSet(F, 0, setSlashes)
+
+\* @type: (ADDR, Set(BOND)) => Int;
+ComputeTakeTotalDeltas(val, setBonds) == LET
+                                         \* @type: (Int, BOND) => Int;
+                                         F(total, bond) == total + BondAfterSlashing(bond.amount, { slash \in slashes[val]: bond.start <= slash.epoch })
+                                         IN ApaFoldSet(F, 0, setBonds)
+                                
+
 \* Unbond `amount` tokens from a validator
 Unbond(sender, validator, amount) ==
     LET fail ==
@@ -237,15 +250,15 @@ Unbond(sender, validator, amount) ==
         THEN
           UNCHANGED <<unbonded, idUnbonds, bonded, idBonds, totalDeltas, totalUnbonded>>
         ELSE
-          LET recordComputeUnbonds == ComputedUnbonds({bond \in bonded[sender, validator]: bond.end = -1}, amount, epoch + PipelineLength + UnbondingLength)
-          IN
+          LET recordComputeUnbonds == ComputedUnbonds({bond \in bonded[sender, validator]: bond.end = -1}, amount, epoch + PipelineLength + UnbondingLength) IN
+          LET takeTotalDeltas == ComputeTakeTotalDeltas(validator, {bond \in recordComputeUnbonds.bondsToAdd: bond.end /= -1}) IN
           /\ unbonded' = [ unbonded EXCEPT ![sender, validator] = @ \union recordComputeUnbonds.unbonds ]
           /\ idUnbonds' = recordComputeUnbonds.id
           /\ bonded' = [ bonded EXCEPT ! [sender, validator] = (@ \ recordComputeUnbonds.bondsToRemove) \union recordComputeUnbonds.bondsToAdd]
           /\ idBonds' = idBonds + 1
           /\ totalDeltas' = [ n \in 0..2*UnbondingLength, val \in ValidatorAddrs |-> totalDeltas[n, val] - 
                               IF n >= UnbondingLength + PipelineLength /\ val = validator
-                              THEN amount
+                              THEN takeTotalDeltas
                               ELSE 0
                             ]
           /\ totalUnbonded' = [ totalUnbonded EXCEPT ! [UnbondingLength + PipelineLength, validator] = @ + amount]

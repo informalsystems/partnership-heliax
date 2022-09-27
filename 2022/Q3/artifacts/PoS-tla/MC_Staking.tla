@@ -289,5 +289,12 @@ TotalAccounts == LET F(sum, user) == sum + balanceOf[user]
 
 TotalAmountTokensConstant ==
     TotalAccounts + posAccount + slashPool = Cardinality(UserAddrs) * INITIAL_SUPPLY
-    
+
+(* 
+ * Invariant #8
+ * Total deltas greater or equal to zero.
+*)
+
+TotalDeltasGreater ==
+    \A val \in ValidatorAddrs: totalDeltas[UnbondingLength, val] >= 0
 ===============================================================================
