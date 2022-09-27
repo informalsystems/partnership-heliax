@@ -260,6 +260,7 @@ func unbond(validator_address, delegator_address, unbond_amount)
     //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
     if (sum{amount | <start, amount> in delbonds} >= unbond_amount) then
       var remain = unbond_amount
+      var amount_after_slashing = unbond_amount
       //Iterate over bonds and create unbond
       forall (<start,amount> in delbonds) do
         //If the next bond amount is greater than the remaining
@@ -267,14 +268,18 @@ func unbond(validator_address, delegator_address, unbond_amount)
           bonds[delegator_address][validator_address].deltas[start, ⊥] = amount - remain
           bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = amount
           remain = 0
+          forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
+            amount_after_slashing -= remain*slash.rate
         //If the remaining is greater or equal than the next bond amount
         else if amount <= remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start, ⊥] = 0
           bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = amount
           remain -= amount
+          forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
+            amount_after_slashing -= amount*slash.rate
       unbonds[delegator_address][validator_address].deltas[(start,cur_epoch+pipeline_length+unbonding_length)] += unbond_amount
       validators[validator_address].total_unbonds[cur_epoch+pipeline_length+unbonding_length] += unbond_amount
-      update_total_deltas(validator_address, pipeline_length, -1*unbond_amount)
+      update_total_deltas(validator_address, pipeline_length, -1*amount_after_slashing)
       update_voting_power(validator_address, pipeline_length)
       update_total_voting_power(pipeline_length)
       update_validator_sets(validator_address, pipeline_length)
