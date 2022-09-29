@@ -21,6 +21,9 @@
 
   @typeAlias: FROZEN = Int -> Set(ADDR);
 
+  @typeAlias: MISBEHAVING = ADDR -> Int;
+
+
   A transaction (a la discriminated union but all fields are packed together):
   @typeAlias: TX = [
     tag: Str,
@@ -44,6 +47,7 @@
     slashes: SLASHES,
     enqueuedSlashes: ENQUEUEDSLASHES,
     frozenValidators: FROZEN,
+    misbehavingValidators: MISBEHAVING,
     lastTx: TX,
     nextTxId: Int,
     txCounter: Int,

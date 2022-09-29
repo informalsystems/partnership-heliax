@@ -14,6 +14,8 @@ UnbondingLength == 1
 
 TxsEpoch == 1
 
+MisbehavingWindow == 100
+
 VARIABLES
     \* Token balance for every account.
     \*
@@ -54,7 +56,11 @@ VARIABLES
     \* Set of frozen validators
     \*
     \* @type: FROZEN;
-    frozenValidators
+    frozenValidators,
+    \* Set of misbehaving validators
+    \*
+    \* @type: MISBEHAVING;
+    misbehavingValidators
 
 \* Variables that model transactions, not the state machine.
 VARIABLES    

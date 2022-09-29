@@ -29,7 +29,11 @@ CONSTANTS
     
     \* tx per epoch
     \* @type: Int;
-    TxsEpoch
+    TxsEpoch,
+
+    \* misbehaving window in epochs
+    \* @type: Int;
+    MisbehavingWindow
 
 VARIABLES
     \* Token balance for every account.
@@ -71,7 +75,11 @@ VARIABLES
     \* Set of frozen validators
     \*
     \* @type: FROZEN;
-    frozenValidators
+    frozenValidators,
+    \* Set of misbehaving validators
+    \*
+    \* @type: MISBEHAVING;
+    misbehavingValidators
 
 
 \* Variables that model transactions, epochs and offsets, not the state machine.
@@ -151,6 +159,7 @@ Init ==
     \* range [cur_epoch..cur_epoch+unbonding_length]
     /\ frozenValidators = [ n \in 0..UnbondingLength |-> {} ]
     \* End epoched variables
+    /\ misbehavingValidators = [ val \in ValidatorAddrs |-> 0 ]
     /\ posAccount = Cardinality(ValidatorAddrs) * INIT_VALIDATOR_STAKE
     /\ slashPool = 0
     /\ nextTxId = 0
@@ -173,7 +182,7 @@ Delegate(sender, validator, amount) ==
     /\ failed' = (fail \/ failed)
     /\ nextTxId' = nextTxId + 1
     /\ txCounter' = txCounter + 1
-    /\ UNCHANGED <<epoch, totalUnbonded, slashPool, unbonded, idUnbonds, slashes, idSlashes, enqueuedSlashes, frozenValidators>>
+    /\ UNCHANGED <<epoch, totalUnbonded, slashPool, unbonded, idUnbonds, slashes, idSlashes, enqueuedSlashes, frozenValidators, misbehavingValidators>>
     /\  IF fail
         THEN
           UNCHANGED <<balanceOf, posAccount, bonded, idBonds, totalDeltas>>
@@ -245,7 +254,7 @@ Unbond(sender, validator, amount) ==
     /\ failed' = (fail \/ failed)
     /\ nextTxId' = nextTxId + 1
     /\ txCounter' = txCounter + 1
-    /\ UNCHANGED <<epoch, balanceOf, posAccount, slashPool, slashes, idSlashes, enqueuedSlashes, frozenValidators>>
+    /\ UNCHANGED <<epoch, balanceOf, posAccount, slashPool, slashes, idSlashes, enqueuedSlashes, frozenValidators, misbehavingValidators>>
     /\  IF fail
         THEN
           UNCHANGED <<unbonded, idUnbonds, bonded, idBonds, totalDeltas, totalUnbonded>>
@@ -294,7 +303,7 @@ Withdraw(sender, validator) ==
      /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ + amountAfterSlashing]
      /\ posAccount' = posAccount - amountAfterSlashing
      /\ unbonded' = [ unbonded EXCEPT ![sender, validator] = @ \ setUnbonds ]
-     /\ UNCHANGED  <<epoch, totalDeltas, totalUnbonded, slashPool, bonded, idBonds, idUnbonds, slashes, idSlashes, enqueuedSlashes, frozenValidators, failed>>
+     /\ UNCHANGED  <<epoch, totalDeltas, totalUnbonded, slashPool, bonded, idBonds, idUnbonds, slashes, idSlashes, enqueuedSlashes, frozenValidators, misbehavingValidators, failed>>
 
 (*
 * Computes the index of totalDeltas and totalUnbonded given an epoch e.
@@ -315,6 +324,7 @@ Evidence(e, validator) ==
                                                                                                           finalRate |-> 0]} ]
     /\ idSlashes' = idSlashes + 1
     /\ frozenValidators' = [ n \in 0..UnbondingLength |-> frozenValidators[n] \union {validator} ]
+    /\ misbehavingValidators' = [ misbehavingValidators EXCEPT ![validator] = MisbehavingWindow ]
     /\ lastTx' = [ id |-> nextTxId, tag |-> "evidence", fail |-> FALSE,
                    sender |-> validator, toAddr |-> validator, value |-> e ]
     /\ UNCHANGED <<epoch, balanceOf, posAccount, slashPool, totalDeltas, totalUnbonded, bonded, idBonds, unbonded, idUnbonds, slashes, nextTxId, txCounter, failed>>
@@ -445,6 +455,7 @@ EndOfEpoch ==
                             THEN frozenValidators[n+1]
                             ELSE {}
                           ]
+    /\ misbehavingValidators' = [ val \in ValidatorAddrs |-> Max(0, misbehavingValidators[val]-1) ]
     /\ slashes' = [ val \in ValidatorAddrs |-> slashes[val] \union newSlashes[val]]
     /\ epoch' = epoch + 1
     /\ lastTx' = [ id |-> nextTxId, tag |-> "endOfEpoch", fail |-> FALSE,
@@ -464,8 +475,8 @@ Next ==
       \E validator \in ValidatorAddrs:
       \E amount \in Int:
         /\ amount <= MAX_UINT
-        \* this guarantees that a validator does not misbehave more than one in an UnbondingLength period.
-        /\ \/ IF validator \notin frozenValidators[0]
+        \* this guarantees that a validator does not misbehave more than once in MisbehavingWindow epochs
+        /\ \/ IF misbehavingValidators[validator] = 0
               THEN
                 \* e is picked such that it is not in the future or too far in the past.
                 \E e \in Int:
@@ -475,7 +486,7 @@ Next ==
                   /\ Evidence(e, validator)
               ELSE
                 UNCHANGED <<epoch, totalDeltas, totalUnbonded, balanceOf, posAccount, slashPool, bonded, idBonds, unbonded, idUnbonds,
-                            slashes, enqueuedSlashes, idSlashes, frozenValidators, nextTxId,
+                            slashes, enqueuedSlashes, idSlashes, frozenValidators, misbehavingValidators, nextTxId,
                             failed, lastTx, txCounter>>
            \/ Delegate(sender, validator, amount)
            \/ Unbond(sender, validator, amount)
