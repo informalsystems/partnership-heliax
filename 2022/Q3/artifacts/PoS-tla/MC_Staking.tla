@@ -179,14 +179,14 @@ HighCoverage(trace) ==
  * a proportional amount of stake to X (subject to limitations e.g. repeated infractions)
  *
  * We can break this into two properties:
- *  (i) Given a validators with total voting power X at a particular height, the 
+ *  (i) Given a validator with total voting power X at a particular height, the 
  *      proof-of-stake model provides the ability to look up bonds contributing to
  *      that voting power.
  * (ii) If evidence is found in time and there are no repeated infractions within 
  *      an epoch window, then the proof-of-stake model guarantees slashing.
  *
  * Invariant #6 verifies property (i) for the case in which there is no slashing.
- * This is the nly case in which we have totalDeltas = bonds.
+ * This is the only case in which we have totalDeltas = bonds.
  *
  * Invariant #2 verifies property (ii).
 *)
