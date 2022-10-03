@@ -213,7 +213,7 @@ BalanceAlwaysPositive ==
  * When we slash a validator (reduce its voting power) at the end of an epoch, we move tokens from the posAccount to
  * the slashPool. Thus, in the posAccount, we only have the bonded tokens that are withdrawable: this means, the bonded
  * tokens minus the slashsable amount. If a user is able to withdraw tokens that were contributing to the voting 
- * power of the misbehaving validator, then in a execution were all toekns are withdrawn, the posAccount should go
+ * power of the misbehaving validator, then in a execution were all tokens are withdrawn, the posAccount should go
  * negative.
 *)
 
