@@ -294,9 +294,15 @@ func withdraw(validator_address, delegator_address)
   var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
   //substract any pending slash before withdrawing
   forall (<start,end,amount> in selfunbonds) do
-    var amount_after_slashing = amount
-    forall (slash in slashes[validator_address] s.t. start <= slash.epoch && slash.epoch <= end)
-      amount_after_slashing -= amount*slash.rate
+    var updated_amount = amount
+    var slashed_amount = 0
+    var previous_slash_epoch = -1
+    forall (slash in slashes[validator_address] in slash.epoch order s.t. start <= slash.epoch && slash.epoch <= end)
+      if previous_slash_epoch == -1 || previous_slash_epoch + unbonding_length < slash.epoch do
+        updated_amount = amount - slashed_amount
+      slashed_amount += updated_amount*slash.rate
+      previous_slash_epoch = slash.epoch
+    amount_after_slashing = amount - slashed_amount
     balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
     //remove unbond
