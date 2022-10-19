@@ -31,7 +31,7 @@ type Validator struct {
 type Bond struct {
   validator Addr //not used
   source Addr //not used
-  deltas map<Epoch, int>
+  deltas map<(start:Epoch, end:epoch) int>
 }
 
 type Unbond struct {
@@ -224,7 +224,7 @@ func bond(validator_address, delegator_address, amount)
 {
   if is_validator(validator_address, cur_epoch+pipeline_length) then
     //add amount bond to delta at n+pipeline_length
-    bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length] += amount
+    bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length, ⊥] += amount
     //debit amount from delegator account and credit it to the PoS account
     balances[delegator_address] -= amount
     balances[pos] += amount
@@ -249,29 +249,37 @@ func bond(validator_address, delegator_address, amount)
     conclusion: it is an actual issue, unresolved
 */
 //This function is called by transactions tx_unbond, tx_undelegate and tx_redelegate
-func unbond(validator_address, delegator_address, amount)
+func unbond(validator_address, delegator_address, unbond_amount)
 {
   //disallow unbonding if the validator is frozen
   var frozen = read_epoched_field(validators[validator_address].frozen, cur_epoch, false)
   if (is_validator(validator_address, cur_epoch+pipeline_length) && frozen == false) then
     //compute total bonds from delegator to validator
-    var delbonds = compute_total_from_deltas(bonds[delegator_address][validator_address].deltas, cur_epoch + unbonding_length)
+    var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[(start, ⊥)] > 0 && start <= cur_epoch + unbonding_length}
     //check if there are enough bonds
     //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
-    if (delbonds >= amount) then
-      //Decrement bond deltas and create unbonds
-      var remain = amount
-      var epoch_counter = cur_epoch + unbonding_length + 1
-      while remain > 0 do
-        epoch_counter = max{epoch | bonds[delegator_address][validator_address].deltas[epoch] > 0 && epoch < epoch_counter}
-        var bond = bonds[delegator_address][validator_address].deltas[epoch_counter]
-        if bond > remain then var unbond_amount = remain
-        else var unbond_amount = bond
-        unbonds[delegator_address][validator_address].deltas[(epoch_counter,cur_epoch+pipeline_length+unbonding_length)] += unbond_amount
-        remain -= unbond_amount
-      bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length+unbonding_length] -= amount
-      validators[validator_address].total_unbonds[cur_epoch+pipeline_length+unbonding_length] += amount
-      update_total_deltas(validator_address, pipeline_length, -1*amount)
+    if (sum{amount | <start, amount> in delbonds} >= unbond_amount) then
+      var remain = unbond_amount
+      var amount_after_slashing = unbond_amount
+      //Iterate over bonds and create unbond
+      forall (<start,amount> in delbonds) do
+        //If the next bond amount is greater than the remaining
+        if amount > remain && remain > 0 do
+          bonds[delegator_address][validator_address].deltas[start, ⊥] = amount - remain
+          bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = remain
+          remain = 0
+          forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
+            amount_after_slashing -= remain*slash.rate
+        //If the remaining is greater or equal than the next bond amount
+        else if amount <= remain && remain > 0 do
+          bonds[delegator_address][validator_address].deltas[start, ⊥] = 0
+          bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = amount
+          remain -= amount
+          forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
+            amount_after_slashing -= amount*slash.rate
+      unbonds[delegator_address][validator_address].deltas[(start,cur_epoch+pipeline_length+unbonding_length)] += unbond_amount
+      validators[validator_address].total_unbonds[cur_epoch+pipeline_length+unbonding_length] += unbond_amount
+      update_total_deltas(validator_address, pipeline_length, -1*amount_after_slashing)
       update_voting_power(validator_address, pipeline_length)
       update_total_voting_power(pipeline_length)
       update_validator_sets(validator_address, pipeline_length)
@@ -529,101 +537,3 @@ func read_epoched_field(field, upper_epoch, bottom){
   else return field[max{assigned_epochs}]
 }
 ```
-
-```go
-func compute_total_from_deltas(deltas, upper_epoch)
-{
-  var epoch = 0
-  var sum = 0
-  while (epoch <= upper_epoch)
-    sum += delta[epoch]
-    epoch++
-  }
-  return sum
-}
-```
-<!--
-## Invariants (WIP)
-
-### From the PoS validity predicate
-
-These are derived from the check on the accumulators that the PoS validity predicate does.
-
-Following, some simplifications on the notation and functions that we use in the invariants.
-
-* To avoid convoluted notation, we avoid using functions such as read_epoched_field, total_deltas_at and compute_total_from_deltas to lookup epoched data. Thus, for instance when we write `validators[validator].total_deltas[epoch]`, we really mean `total_deltas_at(validators[validator].total_deltas, epoch)`. Similarly, when we write bonds[address][validator].deltas[epoch], we really mean compute_total_from_deltas(bonds[address][validator].deltas, epoch).
-
-* Function `total_bonds(validator, epoch)` aggregates all the bonds of a given validator at a given epoch.
-
-```go
-total_bonds(validator, epoch)
-{
-  var total_bonds = 0
-  var addresses = {address | bonds[address][validator].deltas[epoch] > 0}
-  forall (address in addresses) do
-    total_bonds += bonds[address][validator].deltas[epoch]
-  return total_bonds
-}
-```
-
-### Invariant 1
-> for any epoch, validator . `validators[validator].total_deltas[epoch] >= 0`
-
-https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L694-L698
-https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L763-L767
-
-### Invariant 2
-> for any validator, epoch . `validators[validator].total_deltas[epoch] == total_bonds(validator, epoch)`
-
-https://docs.anoma.network/master/explore/design/ledger/pos-integration.html:
-"For each `total_deltas`, there must be the same delta value in `bond_delta`"
-https://github.com/anoma/anoma/blob/master/proof_of_stake/src/validation.rs#L1244-L1250
-
-
-### Invariant 3
-> for any validator, epoch . `total_bonds(validator, epoch) `
--->
-
-<!-- 
-CUBIC SLASHING
-```go
-end_of_epoch()
-{
-  slashing()
-  //Manu: is there an special state for jalied validators?
-  jailing() //TODO
-  rewarding() //TODO
-}
-```
-
-```go
-slashing(){
-  //for each validator
-  forall (address, validator in validators) do
-    //compute set of slashes from the last two epochs
-    var set_slashes = {slash | slash in slashes[address] && cur_epoch-1 <= slash.epoch] }
-    //compute slash rate
-    var slash_rate = calculate_slash_rate(set_slashes)
-    forall (slash in set_slashes) do
-      var max_epoch := max{epoch | validators[address].total_deltas[epoch] != 0 && epoch <= slash.epoch}
-      var slashed_amount := validators[address].total_deltas[max_epoch]*slash_rate
-      //compute new total_deltas and write it at n+pipeline_length
-      var total = total_deltas_at(validators[address].total_deltas, cur_epoch+pipeline_length)
-      validators[address].total_deltas[cur_epoch+pipeline_length] = total - slashed_amount 
-      //update validator's voting_power, total_voting_power and validator_sets at n+pipeline_length
-      validators[validator_address].voting_power[cur_epoch+pipeline_length] = compute_voting_power()
-      total_voting_power[cur_epoch+pipeline_length] = compute_total_voting_power(cur_epoch+pipeline_length)
-      validator_sets[cur_epoch+pipeline_length] = compute_validator_sets()
-}
-```
-```go
-//Cubic slashing function
-calculate_slash_rate(slashes)
-{
-  var voting_power_fraction = 0
-  forall (slash in slashes) do
-    voting_power_fraction += slash.validator.voting_power
-  return max{0.01, min{1, voting_power_fraction^2 * 9}}
-}
-```
--->
