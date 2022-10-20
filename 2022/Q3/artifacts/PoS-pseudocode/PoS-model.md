@@ -302,7 +302,7 @@ func withdraw(validator_address, delegator_address)
         updated_amount = amount - slashed_amount
       slashed_amount += updated_amount*slash.rate
       previous_slash_epoch = slash.epoch
-    amount_after_slashing = amount - slashed_amount
+    var amount_after_slashing = amount - slashed_amount
     balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
     //remove unbond
