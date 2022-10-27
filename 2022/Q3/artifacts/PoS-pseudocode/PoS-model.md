@@ -294,9 +294,17 @@ func withdraw(validator_address, delegator_address)
   var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
   //substract any pending slash before withdrawing
   forall (<start,end,amount> in selfunbonds) do
-    var amount_after_slashing = amount
-    forall (slash in slashes[validator_address] s.t. start <= slash.epoch && slash.epoch <= end)
-      amount_after_slashing -= amount*slash.rate
+    
+    var computed_amounts = {}
+    var updated_amount = amount
+    forall (slash in slashes in slash.epoch order s.t. start <= slash.epoch && slash.epoch <= end) do
+      //Update amount with slashes that happened more than `unbonding_length` before this slash
+      forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length < slash.epoch) do
+        updated_amount -= slashed_amount.amount
+        computed_amounts = computed_amounts \ {slashed_amount}
+      computed_amounts = computed_amounts \union {SlashedAmount{epoch: slash.epoch, amount: updated_amount*slash.rate}}
+
+    var amount_after_slashing = updated_amount - sum({computed_amount.amount | computed_amount in computed_amounts})
     balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
     //remove unbond
@@ -398,7 +406,7 @@ func update_total_voting_power(offset)
   forall (epoch in epochs) do
     var total = 0
     var sets = read_epoched_field(validator_sets, epoch, ⊥)
-    forall (validator in sets.active U sets.inactive) do
+    forall (validator in sets.active \union sets.inactive) do
       total += validator.voting_power
     total_voting_power[epoch] = total
 }
