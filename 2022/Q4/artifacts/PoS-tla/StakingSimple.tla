@@ -235,27 +235,14 @@ Unbond(sender, validator, amount) ==
          /\ totalBonded' = [ totalBonded EXCEPT ! [sender, validator] = @ - amount]
          /\ UNCHANGED <<epoch, balanceOf, posAccount, slashPool, slashes, enqueuedSlashes, frozenValidators, misbehavingValidators>>
 
-
-\* @type: (Set(<<Int, Int>>)) => Int;
-SumComputedAmounts(setAmounts) == LET
-                                  \* @type: (Int, <<Int, Int>>) => Int;
-                                  F(sum, computedAmount) == sum + computedAmount[2] 
-                                  IN ApaFoldSet(F, 0, setAmounts)
-
-\* @type: (Int, Seq(SLASH), Int, Int) => [computedAmounts: Set(<<Int, Int>>), updatedAmount: Int];
+\* @type: (Int, Seq(SLASH), Int, Int) => Int;
 ProcessSlashes(amount, seqSlashes, start, end) == LET
-                                                  \* @type: ([computedAmounts: Set(<<Int, Int>>), updatedAmount: Int], SLASH) => [computedAmounts: Set(<<Int, Int>>), updatedAmount: Int];
-                                                  F(record, nextSlash) ==
-                                                    IF nextSlash.epoch >= start /\ nextSlash.epoch <= end
-                                                    THEN
-                                                      LET computedAmountsToApply == {computedAmount \in record.computedAmounts: computedAmount[1] + UnbondingLength < nextSlash.epoch} IN
-                                                      LET updatedAmount == record.updatedAmount - SumComputedAmounts(computedAmountsToApply) IN
-                                                      LET newComputedAmounts == record.computedAmounts \ computedAmountsToApply IN
-                                                        [ computedAmounts |-> newComputedAmounts \union {<<nextSlash.epoch, updatedAmount*SLASH_RATE>>},
-                                                        \*computedAmounts |-> record.computedAmounts,
-                                                        updatedAmount |->  updatedAmount ]
-                                                      ELSE record
-                                                  IN ApaFoldSeqLeft(F, [computedAmounts |-> {}, updatedAmount |-> amount], seqSlashes)
+                                                  \* @type: (Int, SLASH) => Int;
+                                                  F(updatedAmount, nextSlash) ==
+                                                    IF nextSlash.epoch >= start /\ nextSlash.epoch < end - UnbondingLength
+                                                    THEN updatedAmount - updatedAmount*SLASH_RATE
+                                                    ELSE updatedAmount
+                                                  IN ApaFoldSeqLeft(F, amount, seqSlashes)
 
 (*
 * Iterates over the set of unbonds for a given validator and user, and computes the total amount
@@ -264,18 +251,13 @@ ProcessSlashes(amount, seqSlashes, start, end) == LET
 \* @type: (Set(UNBOND), ADDR, ADDR) => Int;
 ComputeAmountAfterSlashing(setUnbonds, sender, validator) == LET 
                                                              \* @type: (Int, UNBOND) => Int;
-                                                             F(total, unbond) ==
-                                                               IF slashes[validator] /= <<>>
-                                                               THEN 
-                                                                 LET record == ProcessSlashes(unbond.amount, slashes[validator], unbond.start, unbond.end) IN 
-                                                                 total + record.updatedAmount - SumComputedAmounts(record.computedAmounts)
-                                                               ELSE total + unbond.amount
+                                                             F(total, unbond) == total + ProcessSlashes(unbond.amount, slashes[validator], unbond.start, unbond.end)
                                                              IN ApaFoldSet(F, 0, setUnbonds)
 
 \* Withdraw unbonded tokens
 Withdraw(sender, validator) ==
     LET setUnbonds == { unbond \in unbonded[sender, validator]: unbond.end <= epoch } IN
-    LET amountAfterSlashing == ComputeAmountAfterSlashing(setUnbonds, sender, validator) IN
+    LET amountAfterSlashing == IF slashes[validator] = <<>> THEN 0 ELSE ComputeAmountAfterSlashing(setUnbonds, sender, validator) IN
     /\ lastTx' = [ tag |-> "withdraw",
                    sender |-> sender,
                    toAddr |-> validator,

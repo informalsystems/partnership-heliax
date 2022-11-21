@@ -10,7 +10,7 @@ ValidatorAddrs == {"val1", "val2"}
 
 PipelineLength == 1
 
-UnbondingLength == 2
+UnbondingLength == 1
 
 \* Should at least be UnbondingLength
 MisbehavingWindow == UnbondingLength
