@@ -214,8 +214,8 @@ tx_redelegate(src_validator_address, dest_validator_address, delegator_address)
     // Check that `incoming_redelegations[delegator_address]` for `dest_validator_address` and 
     // `outgoing_redelegations[delegator_address]` for `src_validator_address` either don't exist
     // or if they do, they cannot be slashed anymore (`end + unbonding_length <= cur_epoch`)
-    var incoming = validators[dest_validator_address].incoming_redelegations[delegator_address]
-    var outgoing = validators[src_validator_address].outgoing_redelegations[delegator_address]
+    var incoming = validators[dest_validator_address].incoming_redelegations[src_validator_address][delegator_address]
+    var outgoing = validators[src_validator_address].outgoing_redelegations[dest_validator_address][delegator_address]
     if ((incoming != ⊥ && incoming.end + unbonding_length > cur_epoch) ||
        (outgoing != ⊥ && outgoing.end + unbonding_length > cur_epoch)) then
       return
@@ -238,11 +238,11 @@ tx_redelegate(src_validator_address, dest_validator_address, delegator_address)
     var start = cur_epoch
     var end = cur_epoch + unbonding_length
     // Add a new record in `outgoing_redelegations` for `src_validator_address` 
-    validators[src_validator_address].outgoing_redelegations[delegator_address] =
+    validators[src_validator_address].outgoing_redelegations[dest_validator_address][delegator_address] =
       Redelegation{ amount: bonded_tokens, start, end}
 
     // Add a new record in `incoming_redelegations` for `dest_validator_address` 
-    validators[dest_validator_address].incoming_redelegations[delegator_address] =
+    validators[dest_validator_address].incoming_redelegations[src_validator_address][delegator_address] =
       Redelegation{ amount: bonded_tokens, start, end}
 
     // Add a bond in the `dest_validator_address` for the amount
@@ -352,6 +352,17 @@ func withdraw(validator_address, delegator_address)
         updated_amount -= slashed_amount.amount
         computed_amounts = computed_amounts \ {slashed_amount}
       computed_amounts = computed_amounts \union {SlashedAmount{epoch: slash.epoch, amount: updated_amount*slash.rate}}
+
+      // Regard validator's incoming_redelegations - there might be slashes on 
+      // the source validator that should be applied to this bond
+      forall (<dest, redelegations> in validator[validator_address].incoming_redelegations) do
+        var total_redelegated_and_slashable = 0
+        forall (<owner, redelegation> in redelegations | owner == delegator_address) do
+        // Find any redelegation where slash.epoch is between their start and end epoch
+        if (redelegation.start <= slash.epoch && slash.epoch <= redelegation.end) then
+          total_redelegated_and_slashable += redelegation.amount
+        // Add the slash from redelegation source validator to `computed_amounts`
+        computed_amounts = computed_amounts \union {SlashedAmount{epoch: slash.epoch, amount: total_redelegated_and_slashable*slash.rate}}
 
     var amount_after_slashing = updated_amount - sum({computed_amount.amount | computed_amount in computed_amounts})
     balance[delegator_address] += amount_after_slashing
@@ -544,7 +555,8 @@ end_of_epoch()
       append(slashes[validator_address], slash)
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
 
-      // Regard outgoing_redelegations
+      // Regard outgoing_redelegations - the slashed amount for these is applied 
+      // on the destination validator
       forall (<dest, redelegations> in validator[validator_address].outgoing_redelegations) do
         var total_redelegated_and_slashable = 0
         forall (<owner, redelegation> in redelegations) do
