@@ -7,30 +7,26 @@
 
   @typeAlias: BALANCE = ADDR -> Int;
 
-  @typeAlias: UNBONDED = <<ADDR, ADDR>> -> Set(UNBOND);
+  @typeAlias: UNBONDED = ADDR -> Set(UNBOND);
 
-  @typeAlias: BONDED = <<ADDR, ADDR>> -> Set(BOND);
+  @typeAlias: BONDED = ADDR -> Set(BOND);
 
-  @typeAlias: TOTALDELTAS = <<Int, ADDR>> -> Int;
+  @typeAlias: TOTALDELTAS = Int -> Int;
 
-  @typeAlias: TOTALUNBONDED = <<Int, ADDR>> -> Int;
+  @typeAlias: TOTALUNBONDED = Int -> Int;
 
-  @typeAlias: TOTALBONDED = <<ADDR, ADDR>> -> Int;
+  @typeAlias: TOTALBONDED = ADDR -> Int;
 
-  @typeAlias: SLASHES = ADDR -> Seq(SLASH);
+  @typeAlias: SLASHES = Seq(SLASH);
 
-  @typeAlias: ENQUEUEDSLASHES = <<Int, ADDR>> -> Int;
+  @typeAlias: ENQUEUEDSLASHES = Int -> Int;
 
-  @typeAlias: FROZEN = Int -> Set(ADDR);
-
-  @typeAlias: MISBEHAVING = ADDR -> Int;
-
+  @typeAlias: FROZEN = Int -> Bool;
 
   A transaction (a la discriminated union but all fields are packed together):
   @typeAlias: TX = [
     tag: Str,
     sender: ADDR,
-    toAddr: ADDR,
     value: Int
   ];
 
@@ -38,8 +34,8 @@
   @typeAlias: STATE = [
     lastTx: TX,
     balanceOf: BALANCE,
-    unbonded: UNBONDED,
     bonded: BONDED,
+    unbonded: UNBONDED,
     totalDeltas: TOTALDELTAS,
     totalUnbonded: TOTALUNBONDED,
     totalBonded: TOTALBONDED,
@@ -47,8 +43,8 @@
     slashPool: Int,
     slashes: SLASHES,
     enqueuedSlashes: ENQUEUEDSLASHES,
-    frozenValidators: FROZEN,
-    misbehavingValidators: MISBEHAVING,
+    isFrozen: FROZEN,
+    lastMisbehavingEpoch: Int,
     lastTx: TX,
     epoch: Int
   ];

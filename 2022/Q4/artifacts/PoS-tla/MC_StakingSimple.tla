@@ -3,14 +3,13 @@
 EXTENDS Sequences, StakingSimple_typedefs
 
 \* Use the set of four addresses, including two validators.
-UserAddrs == { "user2", "user3", "val1", "val2"}
+UserAddrs == { "user2", "val"}
 
-\* Set of two validators.
-ValidatorAddrs == {"val1", "val2"}
+Validator == "val"
 
 PipelineLength == 1
 
-UnbondingLength == 1
+UnbondingLength == 2
 
 \* Should at least be UnbondingLength
 MisbehavingWindow == UnbondingLength
@@ -20,14 +19,14 @@ VARIABLES
     \*
     \* @type: BALANCE;
     balanceOf,
-    \* Balance of unbonded tokens that cannot be used during the bonding period.
-    \*
-    \* @type: UNBONDED;
-    unbonded,
-    \* Tokens that are delegated to a validator.
+    \* Set of bonded tokens per user.
     \*
     \* @type: BONDED;
     bonded,
+    \* Set of unbonded tokens per user.
+    \*
+    \* @type: UNBONDED;
+    unbonded,
     \* Stake at a given validator.
     \*
     \* @type: TOTALDELTAS;
@@ -59,11 +58,11 @@ VARIABLES
     \* Set of frozen validators
     \*
     \* @type: FROZEN;
-    frozenValidators,
+    isFrozen,
     \* Set of misbehaving validators
     \*
-    \* @type: MISBEHAVING;
-    misbehavingValidators
+    \* @type: Int;
+    lastMisbehavingEpoch
 
 \* Variables that model transactions, not the state machine.
 VARIABLES    
@@ -127,29 +126,21 @@ HighCoverage(trace) ==
     LET Example ==
         \* epoch 2
         /\ state1.lastTx.tag = "unbond"
-        /\ state1.lastTx.sender = "val1"
-        /\ state1.lastTx.toAddr = "val1"
+        /\ state1.lastTx.sender = "val"
         /\ state1.lastTx.value > 0
-        /\ ~state1.lastTx.fail
         /\ state2.lastTx.tag = "endOfEpoch"
         \* epoch 3
         /\ state3.lastTx.tag = "evidence"
-        /\ state3.lastTx.sender = "val1"
         \* at initial epoch
         /\ state3.lastTx.value = 2
-        /\ ~state3.lastTx.fail
         /\ state4.lastTx.tag = "delegate"
         /\ state4.lastTx.sender = "user2"
-        /\ state4.lastTx.toAddr = "val2"
-        /\ ~state4.lastTx.fail
         \* the evidence is processed
         /\ state5.lastTx.tag = "endOfEpoch"
         \* epoch 4
         \* tokens ready to be withdrawn
         /\ state6.lastTx.tag = "withdraw"
-        /\ state6.lastTx.sender = "val1"
-        /\ state6.lastTx.toAddr = "val1"
-        /\ ~state6.lastTx.fail
+        /\ state6.lastTx.sender = "val"
     IN
     ~Example
 
@@ -157,17 +148,17 @@ HighCoverage(trace) ==
 
 \* Auxiliary functions for the model invariants
 
-TotalBonds(sender, validator) == LET 
-                                 \* @type: (Int, BOND) => Int;
-                                 F(total, bond) == total + bond.amount
-                                 IN ApaFoldSet(F, 0, bonded[sender, validator])
+TotalBonds(sender) == LET 
+                      \* @type: (Int, BOND) => Int;
+                      F(total, bond) == total + bond.amount
+                      IN ApaFoldSet(F, 0, bonded[sender])
 
 (* 
  * The sum of individual bonds is equal to totalBonded
 *)
 
 TotalBondsEquality ==
-    \A user \in UserAddrs, val \in ValidatorAddrs: TotalBonds(user, val) = totalBonded[user, val]
+    \A user \in UserAddrs: TotalBonds(user) = totalBonded[user]
 
 \* PoS invariants
 
@@ -223,14 +214,14 @@ PoSAccountAlwaysPositive ==
 \* Auxiliary functions for Invariant #3.
 
 foldBonds == LET
-             \* @type: (Set(BOND), <<ADDR, ADDR>>) => Set(BOND);   
-             F(set, pair) == set \union bonded[pair[1], pair[2]]
-             IN ApaFoldSet(F, {}, UserAddrs \X ValidatorAddrs)
+             \* @type: (Set(BOND), ADDR) => Set(BOND);   
+             F(set, user) == set \union bonded[user]
+             IN ApaFoldSet(F, {}, UserAddrs)
 
 foldUnbonds == LET
-               \* @type: (Set(UNBOND), <<ADDR, ADDR>>) => Set(UNBOND);   
-               F(set, pair) == set \union unbonded[pair[1], pair[2]]
-               IN ApaFoldSet(F, {}, UserAddrs \X ValidatorAddrs)
+               \* @type: (Set(UNBOND), ADDR) => Set(UNBOND);   
+               F(set, user) == set \union unbonded[user]
+               IN ApaFoldSet(F, {}, UserAddrs)
 
 (* 
  * Invariant #3
@@ -240,13 +231,13 @@ foldUnbonds == LET
  * In other words, if all the bonds are withdrawn, the PoS balance must be equal to zero.
 *)
 
-posAccountZero ==
+PoSAccountZero ==
     foldBonds = {} /\ foldUnbonds = {} => posAccount = 0
 
 \* Auxiliary functions for Invariants #4, #5 and #6.            
 
-TotalSumBonds(val) == LET F(sum, user) == sum + totalBonded[user, val]
-                      IN ApaFoldSet(F, 0, UserAddrs)
+TotalSumBonds == LET F(sum, user) == sum + totalBonded[user]
+                 IN ApaFoldSet(F, 0, UserAddrs)
 
 (* 
  * Invariant #4
@@ -255,8 +246,7 @@ TotalSumBonds(val) == LET F(sum, user) == sum + totalBonded[user, val]
 *)
 
 VotingpowerDelagations ==
-    \A val \in ValidatorAddrs:
-    TotalSumBonds(val) >= totalDeltas[UnbondingLength+PipelineLength, val]
+    TotalSumBonds >= totalDeltas[UnbondingLength+PipelineLength]
 
 (*
  * Invariant #5
@@ -266,8 +256,7 @@ VotingpowerDelagations ==
 *)
 
 VotingpowerNotEqualDelagations ==
-    \A val \in ValidatorAddrs:
-    TotalSumBonds(val) = totalDeltas[UnbondingLength+PipelineLength, val]
+    TotalSumBonds = totalDeltas[UnbondingLength+PipelineLength]
 
 (* 
  * Invariant #6
@@ -276,7 +265,7 @@ VotingpowerNotEqualDelagations ==
 *)
 
 VotingpowerDelagationsNoSlashing ==
-    slashPool = 0 => \A val \in ValidatorAddrs: TotalSumBonds(val) = totalDeltas[UnbondingLength+PipelineLength, val]
+    slashPool = 0 => TotalSumBonds = totalDeltas[UnbondingLength+PipelineLength]
 
 (* 
  * Invariant #7
@@ -295,6 +284,13 @@ TotalAmountTokensConstant ==
 *)
 
 TotalDeltasGreater ==
-    \A val \in ValidatorAddrs: totalDeltas[UnbondingLength, val] >= 0
+    totalDeltas[UnbondingLength] >= 0
 
+(* 
+ * Invariant #9
+ * A user cannot create money.
+*)
+
+BalanceLessEqualInitial == 
+    \A user \in UserAddrs: balanceOf[user] <= INITIAL_SUPPLY
 ===============================================================================
