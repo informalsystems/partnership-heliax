@@ -42,6 +42,7 @@ type Unbond struct {
 
 type Slash struct {
   epoch Epoch
+  validator Addr
   rate float
   stake_fraction float //new in cubic slashing
 }
@@ -297,7 +298,7 @@ func withdraw(validator_address, delegator_address)
     
     var computed_amounts = {}
     var updated_amount = amount
-    forall (slash in slashes in slash.epoch order s.t. start <= slash.epoch && slash.epoch < end - unbonding_length) do
+    forall (slash in slashes[validator_address] in slash.epoch order s.t. start <= slash.epoch && slash.epoch < end - unbonding_length) do
       //Update amount with slashes that happened more than `unbonding_length` before this slash
       forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length < slash.epoch) do
         updated_amount -= slashed_amount.amount
@@ -325,7 +326,7 @@ func new_evidence(evidence)
 {
   //create slash
   var total_staked = read_epoched_field(validators[evidence.validator].total_deltas, evidence.epoch, 0)
-  var slash = Slash{epoch: evidence.epoch, rate: 0, stake_fraction: compute_stake_fraction(evidence.type, total_staked)}
+  var slash = Slash{epoch: evidence.epoch, validator: evidence.validator, rate: 0, stake_fraction: compute_stake_fraction(evidence.type, total_staked)}
   //enqueue slash (Step 1.1 of cubic slashing)
   append(enqueued_slashes[evidence.epoch + unbonding_length], slash)
   //jail validator (Step 1.2 of cubic slashing)
