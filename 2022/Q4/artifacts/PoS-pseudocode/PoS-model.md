@@ -497,7 +497,7 @@ end_of_epoch()
 
       var total_unbonded = 0
       //find the total unbonded from the slash epoch up to the current epoch first
-      //the notation 1..X includes both 1 and X in the set.
+      //a..b notation determines an integer range: all integers between a and b inclusive
       forall (epoch in slash.epoch+1..cur_epoch) do
         total_unbonded += validators[validator_address].total_unbonded[epoch]
 
