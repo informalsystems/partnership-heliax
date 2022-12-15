@@ -266,18 +266,17 @@ func unbond(validator_address, delegator_address, unbond_amount)
         //If the next bond amount is greater than the remaining
         if amount > remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start, ⊥] = amount - remain
-          bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = remain
+          unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] = remain
           remain = 0
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= remain*slash.rate
         //If the remaining is greater or equal than the next bond amount
         else if amount <= remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start, ⊥] = 0
-          bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = amount
+          unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] = amount
           remain -= amount
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= amount*slash.rate
-      unbonds[delegator_address][validator_address].deltas[(start,cur_epoch+pipeline_length+unbonding_length)] += unbond_amount
       validators[validator_address].total_unbonds[cur_epoch+pipeline_length+unbonding_length] += unbond_amount
       update_total_deltas(validator_address, pipeline_length, -1*amount_after_slashing)
       update_voting_power(validator_address, pipeline_length)
@@ -287,7 +286,7 @@ func unbond(validator_address, delegator_address, unbond_amount)
 ```
 
 ```go
-/* COMMENT: Somehting to check for correctness https://github.com/informalsystems/partnership-heliax/pull/16#discussion_r924319213 */
+/* COMMENT: Something to check for correctness https://github.com/informalsystems/partnership-heliax/pull/16#discussion_r924319213 */
 //This function is called by transactions tx_withdraw_unbonds_validator and tx_withdraw_unbonds_delegator
 func withdraw(validator_address, delegator_address)
 {
@@ -297,7 +296,7 @@ func withdraw(validator_address, delegator_address)
     
     var computed_amounts = {}
     var updated_amount = amount
-    forall (slash in slashes in slash.epoch order s.t. start <= slash.epoch && slash.epoch <= end) do
+    forall (slash in slashes in slash.epoch order s.t. start <= slash.epoch && slash.epoch < end - unbonding_length) do
       //Update amount with slashes that happened more than `unbonding_length` before this slash
       forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length < slash.epoch) do
         updated_amount -= slashed_amount.amount
@@ -497,7 +496,7 @@ end_of_epoch()
 
       var total_unbonded = 0
       //find the total unbonded from the slash epoch up to the current epoch first
-      forall (epoch in slash.epoch+1..cur_epoch+1) do
+      forall (epoch in slash.epoch+1..cur_epoch) do
         total_unbonded += validators[validator_address].total_unbonded[epoch]
 
       var last_slash = 0
