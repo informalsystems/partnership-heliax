@@ -31,7 +31,7 @@ type Validator struct {
 type Bond struct {
   validator Addr //not used
   source Addr //not used
-  deltas map<(start:Epoch, end:epoch) int>
+  deltas map<start:Epoch, int>
 }
 
 type Unbond struct {
@@ -160,6 +160,7 @@ tx_self_bond(validator_address, amount)
 tx_unbond(validator_address, amount)
 {
   unbond(validator_address, validator_address, amount)
+}
 ```
 
 ```go
@@ -224,7 +225,7 @@ func bond(validator_address, delegator_address, amount)
 {
   if is_validator(validator_address, cur_epoch+pipeline_length) then
     //add amount bond to delta at n+pipeline_length
-    bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length, ⊥] += amount
+    bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length] += amount
     //debit amount from delegator account and credit it to the PoS account
     balances[delegator_address] -= amount
     balances[pos] += amount
@@ -255,24 +256,24 @@ func unbond(validator_address, delegator_address, unbond_amount)
   var frozen = read_epoched_field(validators[validator_address].frozen, cur_epoch, false)
   if (is_validator(validator_address, cur_epoch+pipeline_length) && frozen == false) then
     //compute total bonds from delegator to validator
-    var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[(start, ⊥)] > 0 && start <= cur_epoch + unbonding_length}
+    var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[start] > 0 && start <= cur_epoch + unbonding_length}
     //check if there are enough bonds
     //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
     if (sum{amount | <start, amount> in delbonds} >= unbond_amount) then
       var remain = unbond_amount
       var amount_after_slashing = unbond_amount
       //Iterate over bonds and create unbond
-      forall (<start,amount> in delbonds) do
+      forall (<start, amount> in delbonds) do
         //If the next bond amount is greater than the remaining
         if amount > remain && remain > 0 do
-          bonds[delegator_address][validator_address].deltas[start, ⊥] = amount - remain
+          bonds[delegator_address][validator_address].deltas[start] = amount - remain
           unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] = remain
           remain = 0
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= remain*slash.rate
         //If the remaining is greater or equal than the next bond amount
         else if amount <= remain && remain > 0 do
-          bonds[delegator_address][validator_address].deltas[start, ⊥] = 0
+          bonds[delegator_address][validator_address].deltas[start] = 0
           unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] = amount
           remain -= amount
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
@@ -496,6 +497,7 @@ end_of_epoch()
 
       var total_unbonded = 0
       //find the total unbonded from the slash epoch up to the current epoch first
+      //the notation 1..X includes both 1 and X in the set.
       forall (epoch in slash.epoch+1..cur_epoch) do
         total_unbonded += validators[validator_address].total_unbonded[epoch]
 
