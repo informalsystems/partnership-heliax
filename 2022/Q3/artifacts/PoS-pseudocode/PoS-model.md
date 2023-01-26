@@ -354,10 +354,10 @@ func withdraw(validator_address, delegator_address)
     var total_redelegated_and_slashable = 0
     forall (<src, redelegations> in validators[validator_address].incoming_redelegations) do
       forall (<owner, redelegation> in redelegations | owner == delegator_address) do
-        forall (<start> bonds[owner][src].deltas)
+        forall (<start, end, bond_amount> in bonds[owner][src].deltas)
           // Find any redelegation where slash.epoch is between the src bond start and redelegation start epoch
           forall (src_slash in slashes[src] in slash.epoch order s.t start <= slash.epoch && slash.epoch < redelegation.end)
-            total_redelegated_and_slashable += redelegation.amount
+            total_redelegated_and_slashable += bond_amount
             // Add the slash from redelegation source validator to `computed_amounts`
             computed_amounts = computed_amounts \union {SlashedAmount{epoch: slash.epoch, amount: total_redelegated_and_slashable*slash.rate}}
 
