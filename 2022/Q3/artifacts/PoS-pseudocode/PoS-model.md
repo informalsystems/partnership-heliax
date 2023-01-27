@@ -26,8 +26,6 @@ type Validator struct {
   reward_address Addr
   jail_record JailRecord
   frozen map<Epoch, bool>
-  outgoing_redelegations map<dest:Addr, map<owner:Addr, Redelgation>>
-  incoming_redelegations map<src:Addr, map<owner:Addr, Redelgation>>
 }
 
 type Bond struct {
@@ -56,12 +54,6 @@ type WeightedValidator struct {
 type ValidatorSet struct {
   active orderedset<WeightedValidator>
   inactive orderedset<WeightedValidator>
-}
-
-type Redelgation struct {
-  amount int
-  start Epoch
-  end Epoch
 }
 ```
 
@@ -160,14 +152,14 @@ tx_unjail(validator_address)
 ```go
 tx_self_bond(validator_address, amount)
 {
-  bond(validator_address, validator_address, amount)
+  bond(validator_address, validator_address, amount, pipeline_length)
 }
 ```
 
 ```go
 tx_unbond(validator_address, amount)
 {
-  unbond(validator_address, validator_address, amount, true)
+  unbond(validator_address, validator_address, amount)
 ```
 
 ```go
@@ -196,55 +188,19 @@ tx_delegate(validator_address, delegator_address, amount)
 ```go
 tx_undelegate(validator_address, delegator_address, amount)
 {
-  unbond(validator_address, delegator_address, amount, true)
+  unbond(validator_address, delegator_address, amount)
 }
 ```
 
+<!-- 
 ```go
-// Amount is not specified - a re-delegation must transfer the full amount
-tx_redelegate(src_validator_address, dest_validator_address, delegator_address)
+tx_redelegate(src_validator_address, dest_validator_address, delegator_address, amount)
 {
-
-  // Disallow re-delegation if either validator is frozen (similar to unbonding)
-  var src_frozen = read_epoched_field(validators[src_validator_address].frozen, cur_epoch, false)
-  var dest_frozen = read_epoched_field(validators[dest_validator_address].frozen, cur_epoch, false)
-  if (is_validator(src_validator_address, cur_epoch+pipeline_length) && src_frozen == false &&
-      is_validator(dest_validator_address, cur_epoch+pipeline_length) && dest_frozen == false
-  ) then
-    // Check that `incoming_redelegations[delegator_address]` for `dest_validator_address` and 
-    // `outgoing_redelegations[delegator_address]` for `src_validator_address` either don't exist
-    // or if they do, they cannot be slashed anymore (`end + unbonding_length <= cur_epoch`)
-    var incoming = validators[dest_validator_address].incoming_redelegations[src_validator_address][delegator_address]
-    var outgoing = validators[src_validator_address].outgoing_redelegations[dest_validator_address][delegator_address]
-    if ((incoming != ⊥ && incoming.end + unbonding_length > cur_epoch) ||
-       (outgoing != ⊥ && outgoing.end + unbonding_length > cur_epoch)) then
-      return
-
-    // Find the sum of bonded tokens to `src_validator_address`
-    var bonded_tokens = 0
-    var delbonds = {<start, amount> | amount = bonds[delegator_address][src_validator_address].deltas[(start, ⊥)] > 0 && start <= cur_epoch + unbonding_length}
-    forall (<start,amount> in delbonds) do
-      bonded_tokens += amount
-
-    // Unbond the tokens from `src_validator_address` at pipeline offset, but 
-    // without recording it in the `unbonds[delegator_address][src_validator_address]`
-    var record_unbonds = false
-    unbond(src_validator_address, delegator_address, bonded_tokens, record_unbonds)
-
-    var start = cur_epoch
-    var end = cur_epoch + pipeline_length
-    // Add a new record in `outgoing_redelegations` for `src_validator_address` 
-    validators[src_validator_address].outgoing_redelegations[dest_validator_address][delegator_address] =
-      Redelegation{ amount: bonded_tokens, start, end}
-
-    // Add a new record in `incoming_redelegations` for `dest_validator_address` 
-    validators[dest_validator_address].incoming_redelegations[src_validator_address][delegator_address] =
-      Redelegation{ amount: bonded_tokens, start, end}
-
-    // Add a bond in the `dest_validator_address` for the amount
-    bond(dest_validator_address, delegator_address, bonded_tokens)
+  unbond(src_validator_address, delegator_address, amount)
+  bond(dst_validator_address, delegator_address, amount, unbonding_length)
 }
 ```
+-->
 
 ```go
 tx_withdraw_unbonds_delegator(delegator_address)
@@ -293,7 +249,7 @@ func bond(validator_address, delegator_address, amount)
     conclusion: it is an actual issue, unresolved
 */
 //This function is called by transactions tx_unbond, tx_undelegate and tx_redelegate
-func unbond(validator_address, delegator_address, unbond_amount, record_unbonds)
+func unbond(validator_address, delegator_address, unbond_amount)
 {
   //disallow unbonding if the validator is frozen
   var frozen = read_epoched_field(validators[validator_address].frozen, cur_epoch, false)
@@ -310,19 +266,18 @@ func unbond(validator_address, delegator_address, unbond_amount, record_unbonds)
         //If the next bond amount is greater than the remaining
         if amount > remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start, ⊥] = amount - remain
-          if record_unbonds then
-            unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = remain
+          bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = remain
           remain = 0
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= remain*slash.rate
         //If the remaining is greater or equal than the next bond amount
         else if amount <= remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start, ⊥] = 0
-          if record_unbonds then
-            unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = amount
+          bonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length] = amount
           remain -= amount
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= amount*slash.rate
+      unbonds[delegator_address][validator_address].deltas[(start,cur_epoch+pipeline_length+unbonding_length)] += unbond_amount
       validators[validator_address].total_unbonds[cur_epoch+pipeline_length+unbonding_length] += unbond_amount
       update_total_deltas(validator_address, pipeline_length, -1*amount_after_slashing)
       update_voting_power(validator_address, pipeline_length)
@@ -342,24 +297,12 @@ func withdraw(validator_address, delegator_address)
     
     var computed_amounts = {}
     var updated_amount = amount
-    forall (slash in slashes[validator_address] in slash.epoch order s.t. start <= slash.epoch && slash.epoch <= end) do
+    forall (slash in slashes in slash.epoch order s.t. start <= slash.epoch && slash.epoch <= end) do
       //Update amount with slashes that happened more than `unbonding_length` before this slash
       forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length < slash.epoch) do
         updated_amount -= slashed_amount.amount
         computed_amounts = computed_amounts \ {slashed_amount}
       computed_amounts = computed_amounts \union {SlashedAmount{epoch: slash.epoch, amount: updated_amount*slash.rate}}
-
-    // Regard validator's incoming_redelegations - there might be slashes on 
-    // the source validator that should be applied to this bond
-    var total_redelegated_and_slashable = 0
-    forall (<src, redelegations> in validators[validator_address].incoming_redelegations) do
-      forall (<owner, redelegation> in redelegations | owner == delegator_address) do
-        forall (<start, end, bond_amount> in bonds[owner][src].deltas)
-          // Find any redelegation where slash.epoch is between the src bond start and redelegation start epoch
-          forall (src_slash in slashes[src] in slash.epoch order s.t start <= slash.epoch && slash.epoch < redelegation.end)
-            total_redelegated_and_slashable += bond_amount
-            // Add the slash from redelegation source validator to `computed_amounts`
-            computed_amounts = computed_amounts \union {SlashedAmount{epoch: slash.epoch, amount: total_redelegated_and_slashable*slash.rate}}
 
     var amount_after_slashing = updated_amount - sum({computed_amount.amount | computed_amount in computed_amounts})
     balance[delegator_address] += amount_after_slashing
@@ -552,21 +495,19 @@ end_of_epoch()
       append(slashes[validator_address], slash)
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
 
-      // Regard outgoing_redelegations - the slashed amount for these is applied 
-      // on the destination validator
-      forall (<dest, redelegations> in validator[validator_address].outgoing_redelegations) do
-        var total_redelegated_and_slashable = 0
-        forall (<owner, redelegation> in redelegations) do
-          // Find any redelegation where slash.epoch is between their start and end epoch
-          if (redelegation.start <= slash.epoch && slash.epoch <= redelegation.end) then
-            total_redelegated_and_slashable += redelegation.amount
-        // Apply the slash on the redelegations' total amount to the `dest` validator
-        apply_slash(dest, slash.rate, total_redelegated_and_slashable)
-        // And subtract it from this validator's `total_staked` amount
-        total_staked -= total_redelegated_and_slashable
+      var total_unbonded = 0
+      //find the total unbonded from the slash epoch up to the current epoch first
+      forall (epoch in slash.epoch+1..cur_epoch+1) do
+        total_unbonded += validators[validator_address].total_unbonded[epoch]
 
-      // Apply the slash on this validator
-      apply_slash(validator_address, slash.rate, total_redelegated_and_slashable)
+      var last_slash = 0
+      forall (offset in 1..unbonding_length) do
+        total_unbonded += validators[validator_address].total_unbonded[cur_epoch + offset]
+        var this_slash = (total_staked - total_unbonded) * slash.rate
+        var diff_slashed_amount = last_slash - this_slash
+        last_slash = this_slash
+        update_total_deltas(validator_address, offset, diff_slashed_amount)
+        update_voting_power(validator_address, offset)
 
     //unfreeze the validator (Step 2.5 of cubic slashing)
     //this step is done in advance when the evidence is found
@@ -574,25 +515,6 @@ end_of_epoch()
     //note that this index could have been overwritten if more evidence for the same validator
     //where found since then
   cur_epoch = cur_epoch + 1
-}
-```
-
-```go
-func apply_slash(validator_address, rate, staked_amount)
-{
-  var total_unbonded = 0
-  //find the total unbonded from the slash epoch up to the current epoch first
-  forall (epoch in slash.epoch+1..cur_epoch+1) do
-    total_unbonded += validators[validator_address].total_unbonded[epoch]
-
-  var last_slash = 0
-  forall (offset in 1..unbonding_length) do
-    total_unbonded += validators[validator_address].total_unbonded[cur_epoch + offset]
-    var this_slash = (staked_amount - total_unbonded) * rate
-    var diff_slashed_amount = last_slash - this_slash
-    last_slash = this_slash
-    update_total_deltas(validator_address, offset, diff_slashed_amount)
-    update_voting_power(validator_address, offset)
 }
 ```
 
