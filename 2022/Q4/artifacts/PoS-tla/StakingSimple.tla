@@ -14,7 +14,7 @@ EXTENDS Integers, Apalache, FiniteSets, Sequences, StakingSimple_typedefs
 
 CONSTANTS
     \* Set of all user addresses.
-    \* @type: Set(ADDR);
+    \* @type: Set($addr);
     UserAddrs,
 
     \* Validator's name
@@ -33,27 +33,27 @@ CONSTANTS
 VARIABLES
     \* Token balance for every user.
     \*
-    \* @type: BALANCE;
+    \* @type: $balance;
     balanceOf,
     \* Set of bonded tokens per user.
     \*
-    \* @type: BONDED;
+    \* @type: $bonded;
     bonded,
     \* Set of unbonded tokens per user.
     \*
-    \* @type: UNBONDED;
+    \* @type: $unbonded;
     unbonded,
     \* Stake of the validator at a given epoch.
     \*
-    \* @type: TOTALDELTAS;
+    \* @type: $totalDeltas;
     totalDeltas,
     \* Stake unbonded from the validator at a given epoch.
     \*
-    \* @type: TOTALUNBONDED;
+    \* @type: $totalUnbonded;
     totalUnbonded,
     \* Total delegated per user.
     \*
-    \* @type: TOTALBONDED;
+    \* @type: $totalBonded;
     totalBonded,
     \* PoS special account
     \*
@@ -65,15 +65,15 @@ VARIABLES
     slashPool,
     \* Set of processed slashes
     \*
-    \* @type: SLASHES;
+    \* @type: $slashes;
     slashes,
     \* Enqueued slash
     \*
-    \* @type: ENQUEUEDSLASHES;
+    \* @type: $enqueuedSlashes;
     enqueuedSlashes,
     \* Determines if the validator is frozen
     \*
-    \* @type: FROZEN;
+    \* @type: $frozen;
     isFrozen,
     \* Tracks the number of epochs the validator 
     \* has to wait before misbehaving. This is used
@@ -87,7 +87,7 @@ VARIABLES
 VARIABLES    
     \* The last executed transaction.
     \*
-    \* @type: TX;
+    \* @type: $tx;
     lastTx,
     \* A serial number used to identify epochs
     \* cur_epoch in pseudocode
@@ -150,7 +150,9 @@ Init ==
     /\ posAccount = INIT_VALIDATOR_STAKE
     /\ slashPool = 0
     /\ epoch = UnbondingLength + 1
-    /\ lastTx = [ tag |-> "None" ]
+    /\ lastTx = [ tag |-> "None",
+                  sender |-> "",
+                  value |-> 0]
 
 \* delegate `amount` tokens to a validator
 Delegate(sender, amount) ==
@@ -171,13 +173,13 @@ Delegate(sender, amount) ==
 
 \* @type: (Int, Int) => Int;
 BondAfterSlashing(amount, start) == LET
-                                    \* @type: (Int, SLASH) => Int;
+                                    \* @type: (Int, $slash) => Int;
                                     F(total, slash) == IF start <= slash.epoch THEN total + amount*SLASH_RATE ELSE total
                                     IN ApaFoldSeqLeft(F, 0, slashes)
 
-\* @type: (Int, ADDR) => [ remaining: Int, bonds: Set(BOND), bondToAdd: BOND, takeTotalDeltas: Int ];
+\* @type: (Int, $addr) => { remaining: Int, bonds: Set($bond), bondToAdd: $bond, takeTotalDeltas: Int };
 ComputedUnbonds(totalAmount, sender) == LET 
-                                        \* @type: ([ remaining: Int, bonds: Set(BOND), bondToAdd: BOND, takeTotalDeltas: Int ], BOND) => [ remaining: Int, bonds: Set(BOND), bondToAdd: BOND, takeTotalDeltas: Int ];
+                                        \* @type: ({ remaining: Int, bonds: Set($bond), bondToAdd: $bond, takeTotalDeltas: Int }, $bond) => { remaining: Int, bonds: Set($bond), bondToAdd: $bond, takeTotalDeltas: Int };
                                         F(record, bond) == 
                                           IF record.remaining = 0
                                           THEN record
@@ -187,12 +189,12 @@ ComputedUnbonds(totalAmount, sender) == LET
                                                  bonds |-> record.bonds \union {bond},
                                                  bondToAdd |->
                                                    IF bond.amount = min
-                                                   THEN [ amount |-> -1 ]
+                                                   THEN [ amount |-> -1, start |-> bond.start, end |-> -1  ]
                                                    ELSE [ amount |-> bond.amount - min, start |-> bond.start, end |-> -1 ],
                                                  takeTotalDeltas |-> record.takeTotalDeltas + min - BondAfterSlashing(min, bond.start) ]
-                                        IN ApaFoldSet(F, [ remaining |-> totalAmount, bonds |-> {}, bondToAdd |-> [ amount |-> -1 ], takeTotalDeltas |-> 0], bonded[sender])
+                                        IN ApaFoldSet(F, [ remaining |-> totalAmount, bonds |-> {}, bondToAdd |-> [ amount |-> -1, start |-> -1, end |-> -1  ], takeTotalDeltas |-> 0], bonded[sender])
 
-\* @type: (BOND, Int, Int) => BOND;
+\* @type: ($bond, Int, Int) => $bond;
 FilterBond(bond, remain, e) == IF bond.start = e THEN [ bond EXCEPT !.amount = @ - remain ] ELSE bond
 
 \* Unbond `amount` tokens from a validator
@@ -217,9 +219,9 @@ Unbond(sender, amount) ==
          /\ totalBonded' = [ totalBonded EXCEPT ! [sender] = @ - amount]
          /\ UNCHANGED <<epoch, balanceOf, posAccount, slashPool, slashes, enqueuedSlashes, isFrozen, lastMisbehavingEpoch>>
 
-\* @type: (Int, Seq(SLASH), Int, Int) => Int;
+\* @type: (Int, Seq($slash), Int, Int) => Int;
 ProcessSlashes(amount, seqSlashes, start, end) == LET
-                                                  \* @type: (Int, SLASH) => Int;
+                                                  \* @type: (Int, $slash) => Int;
                                                   F(updatedAmount, nextSlash) ==
                                                     IF nextSlash.epoch >= start /\ nextSlash.epoch < end - UnbondingLength
                                                     THEN updatedAmount - updatedAmount*SLASH_RATE
@@ -230,9 +232,9 @@ ProcessSlashes(amount, seqSlashes, start, end) == LET
 * Iterates over the set of unbonds, and computes the total amount
 * that can be withdrawn. 
 *)
-\* @type: (Set(UNBOND), ADDR) => Int;
+\* @type: (Set($unbond), $addr) => Int;
 ComputeAmountAfterSlashing(setUnbonds, sender) == LET 
-                                                  \* @type: (Int, UNBOND) => Int;
+                                                  \* @type: (Int, $unbond) => Int;
                                                   F(total, unbond) == total + ProcessSlashes(unbond.amount, slashes, unbond.start, unbond.end)
                                                   IN ApaFoldSet(F, 0, setUnbonds)
 
@@ -269,6 +271,7 @@ Evidence(e) ==
     /\ isFrozen' = [ n \in 0..UnbondingLength |-> TRUE ]
     /\ lastMisbehavingEpoch' = e + MisbehavingWindow
     /\ lastTx' = [ tag |-> "evidence",
+                   sender |-> "",
                    value |-> e ]
     /\ UNCHANGED <<epoch, balanceOf, posAccount, slashPool, totalDeltas, totalUnbonded, totalBonded, bonded, unbonded, slashes>>
 
@@ -306,7 +309,7 @@ EndOfEpoch ==
                   ELSE slashes
     /\ epoch' = epoch + 1
     /\ lastTx' = [ tag |-> "endOfEpoch",
-                   sender |-> "", toAddr |-> "",
+                   sender |-> "",
                    value |-> epoch ]
     /\ posAccount' = posAccount - totalSlashed
     /\ slashPool' = slashPool + totalSlashed

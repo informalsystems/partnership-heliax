@@ -15,29 +15,29 @@ UnbondingLength == 2
 MisbehavingWindow == UnbondingLength
 
 VARIABLES
-    \* Token balance for every account.
+    \* Token balance for every user.
     \*
-    \* @type: BALANCE;
+    \* @type: $balance;
     balanceOf,
     \* Set of bonded tokens per user.
     \*
-    \* @type: BONDED;
+    \* @type: $bonded;
     bonded,
     \* Set of unbonded tokens per user.
     \*
-    \* @type: UNBONDED;
+    \* @type: $unbonded;
     unbonded,
-    \* Stake at a given validator.
+    \* Stake of the validator at a given epoch.
     \*
-    \* @type: TOTALDELTAS;
+    \* @type: $totalDeltas;
     totalDeltas,
-    \* Stake unbonded from a given validator at a given epoch.
+    \* Stake unbonded from the validator at a given epoch.
     \*
-    \* @type: TOTALUNBONDED;
+    \* @type: $totalUnbonded;
     totalUnbonded,
-    \* Total delegated.
+    \* Total delegated per user.
     \*
-    \* @type: TOTALBONDED;
+    \* @type: $totalBonded;
     totalBonded,
     \* PoS special account
     \*
@@ -47,19 +47,21 @@ VARIABLES
     \*
     \* @type: Int;
     slashPool,
-    \* Slashes
+    \* Set of processed slashes
     \*
-    \* @type: SLASHES;
+    \* @type: $slashes;
     slashes,
-    \* Enqueued slashes
+    \* Enqueued slash
     \*
-    \* @type: ENQUEUEDSLASHES;
+    \* @type: $enqueuedSlashes;
     enqueuedSlashes,
-    \* Set of frozen validators
+    \* Determines if the validator is frozen
     \*
-    \* @type: FROZEN;
+    \* @type: $frozen;
     isFrozen,
-    \* Set of misbehaving validators
+    \* Tracks the number of epochs the validator 
+    \* has to wait before misbehaving. This is used
+    \* to control how often the validator misbehave
     \*
     \* @type: Int;
     lastMisbehavingEpoch
@@ -68,7 +70,7 @@ VARIABLES
 VARIABLES    
     \* The last executed transaction.
     \*
-    \* @type: TX;
+    \* @type: $tx;
     lastTx,
     \* A serial number used to identify epochs
     \* @type: Int;
@@ -84,7 +86,6 @@ NoSuccessfulWithdraw ==
     LET Example ==
         /\ lastTx.tag = "withdraw"
         /\ lastTx.value > 0
-        /\ ~lastTx.fail
     IN
     ~Example
 
@@ -92,7 +93,6 @@ NoSuccessfulWithdraw ==
 NoWithdraw ==
     LET Example ==
         /\ lastTx.tag = "withdraw"
-        /\ ~lastTx.fail
     IN
     ~Example
 
@@ -100,7 +100,6 @@ NoWithdraw ==
 NoEvidence ==
     LET Example ==
         /\ lastTx.tag = "evidence"
-        /\ ~lastTx.fail
     IN
     ~Example
 
@@ -114,7 +113,7 @@ NoEvidence ==
 * UnbondingLength == 1
 *
 *)
-\* @type: Seq(STATE) => Bool;
+\* @type: Seq($state) => Bool;
 HighCoverage(trace) ==
     \* trace[1] is the initial state
     LET state1 == trace[2] IN
@@ -144,12 +143,13 @@ HighCoverage(trace) ==
     IN
     ~Example
 
+
 \* Model invariants
 
 \* Auxiliary functions for the model invariants
 
 TotalBonds(sender) == LET 
-                      \* @type: (Int, BOND) => Int;
+                      \* @type: (Int, $bond) => Int;
                       F(total, bond) == total + bond.amount
                       IN ApaFoldSet(F, 0, bonded[sender])
 
@@ -214,12 +214,12 @@ PoSAccountAlwaysPositive ==
 \* Auxiliary functions for Invariant #3.
 
 foldBonds == LET
-             \* @type: (Set(BOND), ADDR) => Set(BOND);   
+             \* @type: (Set($bond), $addr) => Set($bond);   
              F(set, user) == set \union bonded[user]
              IN ApaFoldSet(F, {}, UserAddrs)
 
 foldUnbonds == LET
-               \* @type: (Set(UNBOND), ADDR) => Set(UNBOND);   
+               \* @type: (Set($unbond), $addr) => Set($unbond);   
                F(set, user) == set \union unbonded[user]
                IN ApaFoldSet(F, {}, UserAddrs)
 

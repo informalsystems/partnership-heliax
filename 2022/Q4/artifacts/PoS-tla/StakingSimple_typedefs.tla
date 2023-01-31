@@ -3,71 +3,70 @@
   Type definitions for the module Staking.
 
   An account address, in our case, simply an uninterpreted string:
-  @typeAlias: ADDR = Str;
+  @typeAlias: addr = Str;
 
-  @typeAlias: BALANCE = ADDR -> Int;
+  @typeAlias: balance = $addr -> Int;
 
-  @typeAlias: UNBONDED = ADDR -> Set(UNBOND);
+  @typeAlias: unbonded = $addr -> Set($unbond);
 
-  @typeAlias: BONDED = ADDR -> Set(BOND);
+  @typeAlias: bonded = $addr -> Set($bond);
 
-  @typeAlias: TOTALDELTAS = Int -> Int;
+  @typeAlias: totalDeltas = Int -> Int;
 
-  @typeAlias: TOTALUNBONDED = Int -> Int;
+  @typeAlias: totalUnbonded = Int -> Int;
 
-  @typeAlias: TOTALBONDED = ADDR -> Int;
+  @typeAlias: totalBonded = $addr -> Int;
 
-  @typeAlias: SLASHES = Seq(SLASH);
+  @typeAlias: slashes = Seq($slash);
 
-  @typeAlias: ENQUEUEDSLASHES = Int -> Int;
+  @typeAlias: enqueuedSlashes = Int -> Int;
 
-  @typeAlias: FROZEN = Int -> Bool;
+  @typeAlias: frozen = Int -> Bool;
 
   A transaction (a la discriminated union but all fields are packed together):
-  @typeAlias: TX = [
+  @typeAlias: tx = {
     tag: Str,
-    sender: ADDR,
+    sender: $addr,
     value: Int
-  ];
+  };
 
-  A state of the state machine:
-  @typeAlias: STATE = [
-    lastTx: TX,
-    balanceOf: BALANCE,
-    bonded: BONDED,
-    unbonded: UNBONDED,
-    totalDeltas: TOTALDELTAS,
-    totalUnbonded: TOTALUNBONDED,
-    totalBonded: TOTALBONDED,
-    posAccount: Int,
-    slashPool: Int,
-    slashes: SLASHES,
-    enqueuedSlashes: ENQUEUEDSLASHES,
-    isFrozen: FROZEN,
-    lastMisbehavingEpoch: Int,
-    lastTx: TX,
-    epoch: Int
-  ];
-
-  @typeAlias: BOND = [
+  @typeAlias: bond = {
     amount: Int,
     start: Int,
     end: Int
-  ];
+  };
 
-  @typeAlias: UNBOND = [
+  @typeAlias: unbond = {
     amount: Int,
     start: Int,
     end: Int
-  ];
+  };
 
-  @typeAlias: SLASH = [
+  @typeAlias: slash = {
     epoch: Int,
     stake: Int,
     finalRate: Int
-  ];
+  };
+
+  A state of the state machine:
+  @typeAlias: state = {
+    lastTx: $tx,
+    balanceOf: $balance,
+    bonded: $bonded,
+    unbonded: $unbonded,
+    totalDeltas: $totalDeltas,
+    totalUnbonded: $totalUnbonded,
+    totalBonded: $totalBonded,
+    posAccount: Int,
+    slashPool: Int,
+    slashes: $slashes,
+    enqueuedSlashes: $enqueuedSlashes,
+    isFrozen: $frozen,
+    lastMisbehavingEpoch: Int,
+    epoch: Int
+  };
 
   Below is a dummy definition to introduce the above type aliases.
  *) 
-Staking_typedefs == TRUE
+StakingSimple_typedefs == TRUE
 ===============================================================================
