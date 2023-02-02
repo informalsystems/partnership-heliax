@@ -279,7 +279,7 @@ func unbond(validator_address, delegator_address, unbond_amount)
           remain -= amount
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= amount*slash.rate
-      validators[validator_address].total_unbonds[cur_epoch+pipeline_length+unbonding_length] += unbond_amount
+      validators[validator_address].total_unbonds[cur_epoch+pipeline_length] += unbond_amount
       update_total_deltas(validator_address, pipeline_length, -1*amount_after_slashing)
       update_voting_power(validator_address, pipeline_length)
       update_total_voting_power(pipeline_length)
