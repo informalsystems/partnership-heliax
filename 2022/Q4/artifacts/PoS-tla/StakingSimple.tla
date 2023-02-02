@@ -18,6 +18,7 @@ CONSTANTS
     UserAddrs,
 
     \* Validator's name
+    \* @type: $addr;
     Validator,
 
     \* @type: Int;
@@ -241,7 +242,7 @@ ComputeAmountAfterSlashing(setUnbonds, sender) == LET
 \* Withdraw unbonded tokens
 Withdraw(sender) ==
     LET setUnbonds == { unbond \in unbonded[sender]: unbond.end <= epoch } IN
-    LET amountAfterSlashing == IF slashes = <<>> THEN 0 ELSE ComputeAmountAfterSlashing(setUnbonds, sender) IN
+    LET amountAfterSlashing == ComputeAmountAfterSlashing(setUnbonds, sender) IN
     /\ lastTx' = [ tag |-> "withdraw",
                    sender |-> sender,
                    value |-> amountAfterSlashing ]
