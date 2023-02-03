@@ -22,6 +22,7 @@ type Validator struct {
   state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
   total_unbonds map<Epoch, amount:int>
+  total_bonds map<Epoch, amount:int>
   voting_power map<Epoch, VotingPower>
   reward_address Addr
   jail_record JailRecord
@@ -230,6 +231,7 @@ func bond(validator_address, delegator_address, amount)
     //debit amount from delegator account and credit it to the PoS account
     balances[delegator_address] -= amount
     balances[pos] += amount
+    validators[validator_address].total_bonds[cur_epoch+pipeline_length] += amount
     update_total_deltas(validator_address, pipeline_lenght, amount)
     update_voting_power(validator_address, pipeline_lenght)
     update_total_voting_power(pipeline_lenght)
@@ -497,15 +499,18 @@ end_of_epoch()
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
 
       var total_unbonded = 0
+      var total_bonded = 0
       //find the total unbonded from the slash epoch up to the current epoch first
       //a..b notation determines an integer range: all integers between a and b inclusive
       forall (epoch in slash.epoch+1..cur_epoch) do
         total_unbonded += validators[validator_address].total_unbonded[epoch]
+        total_bonded += validators[validator_address].total_bonded[epoch]
 
       var last_slash = 0
       forall (offset in 1..unbonding_length) do
         total_unbonded += validators[validator_address].total_unbonded[cur_epoch + offset]
-        var this_slash = (total_staked - total_unbonded) * slash.rate
+        total_bonded += validators[validator_address].total_bonded[cur_epoch + offset]
+        var this_slash = (total_staked + total_bonded - total_unbonded) * slash.rate
         var diff_slashed_amount = last_slash - this_slash
         last_slash = this_slash
         update_total_deltas(validator_address, offset, diff_slashed_amount)
