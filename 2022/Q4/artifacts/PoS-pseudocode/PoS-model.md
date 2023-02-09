@@ -277,7 +277,15 @@ func unbond(validator_address, delegator_address, unbond_amount)
           remain = 0
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= remain*slash.rate
-           validators[validator_address].total_unbonds[cur_epoch+pipeline_length] = {UnbondRecord{amount: remain, start: start}} \union validators[validator_address].total_unbonds[cur_epoch+pipeline_length]
+          //The current model disregards a corner case that should be taken care of in the implementation:
+          //- Assume a user delegates 10 tokens to a validator at epoch e1
+          //- Assume the user unbonds twice 5 tokens from the same validator in the same epoch in two different transactions e2
+          //- When executing the first undelegate tx, the model creates the record UnbondRecord{amount: 5, start: e1 } and updates the bond to 5 tokens
+          //- When executing the second undelegate tx, the model creates the same record UnbondRecord{amount: 5, start: e1 } and removes the bond.
+          //- The problem is that we keep unbond records in a set and when we try to add the second record, since it is a duplicate, it will be discarded.
+          //It is an easy fix I'd say: use a bag instead of a set to allow duplicates, or check if the set includes the record and act upon (remove it, create a new one with double the amount, and add it).
+          //Same below
+          validators[validator_address].total_unbonds[cur_epoch+pipeline_length] = {UnbondRecord{amount: remain, start: start}} \union validators[validator_address].total_unbonds[cur_epoch+pipeline_length]
         //If the remaining is greater or equal than the next bond amount
         else if amount <= remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start] = 0
