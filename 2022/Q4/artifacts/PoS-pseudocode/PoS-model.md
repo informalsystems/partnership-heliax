@@ -503,7 +503,6 @@ end_of_epoch()
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
 
       var total_unbonded = 0
-      var total_bonded = 0
       //find the total unbonded from the slash epoch up to the current epoch first
       //a..b notation determines an integer range: all integers between a and b inclusive
       forall (epoch in slash.epoch+1..cur_epoch) do
