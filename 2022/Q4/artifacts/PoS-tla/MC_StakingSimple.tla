@@ -33,12 +33,12 @@ VARIABLES
     totalDeltas,
     \* Stake unbonded from the validator at a given epoch.
     \*
-    \* @type: $totalUnbonded;
-    totalUnbonded,
+    \* @type: $totalBalanceBonds;
+    totalBalanceBonds,
     \* Total delegated per user.
     \*
-    \* @type: $totalBonded;
-    totalBonded,
+    \* @type: $totalDelegated;
+    totalDelegated,
     \* PoS special account
     \*
     \* @type: Int;
@@ -154,11 +154,11 @@ TotalBonds(sender) == LET
                       IN ApaFoldSet(F, 0, bonded[sender])
 
 (* 
- * The sum of individual bonds is equal to totalBonded
+ * The sum of individual bonds is equal to totalDelegated
 *)
 
 TotalBondsEquality ==
-    \A user \in UserAddrs: TotalBonds(user) = totalBonded[user]
+    \A user \in UserAddrs: TotalBonds(user) = totalDelegated[user]
 
 \* PoS invariants
 
@@ -236,7 +236,7 @@ PoSAccountZero ==
 
 \* Auxiliary functions for Invariants #4, #5 and #6.            
 
-TotalSumBonds == LET F(sum, user) == sum + totalBonded[user]
+TotalSumBonds == LET F(sum, user) == sum + totalDelegated[user]
                  IN ApaFoldSet(F, 0, UserAddrs)
 
 (* 

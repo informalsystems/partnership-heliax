@@ -50,12 +50,12 @@ VARIABLES
     totalDeltas,
     \* Stake unbonded from the validator at a given epoch.
     \*
-    \* @type: $totalUnbonded;
-    totalUnbonded,
+    \* @type: $totalBalanceBonds;
+    totalBalanceBonds,
     \* Total delegated per user.
     \*
-    \* @type: $totalBonded;
-    totalBonded,
+    \* @type: $totalDelegated;
+    totalDelegated,
     \* PoS special account
     \*
     \* @type: Int;
@@ -137,20 +137,20 @@ Init ==
     \* range [cur_epoch-unbonding_length..cur_epoch+pipeline_length]
     /\ totalDeltas = [ n \in 0..UnbondingLength + PipelineLength |-> INIT_VALIDATOR_STAKE ]
     \* range [cur_epoch-unbonding_length..cur_epoch+pipeline_length]
-    /\ totalUnbonded = [ n \in 0..UnbondingLength + PipelineLength |-> 0 ]
+    /\ totalUnbonded = [ n \in 1..UnbondingLength + PipelineLength |-> [ n - UnbondingLength + PipelineLength..n-1 |-> 0 ] ]
     \* range [cur_epoch..cur_epoch+unbonding_length]
     /\ enqueuedSlashes = [ n \in 0..UnbondingLength |-> 0] 
     \* range [cur_epoch..cur_epoch+unbonding_length]
     /\ isFrozen = [ n \in 0..UnbondingLength |-> FALSE ]
     \* End epoched variables
-    /\ totalBonded = [ user \in UserAddrs |-> 
+    /\ totalDelegated = [ user \in UserAddrs |-> 
                        IF user = Validator
                        THEN INIT_VALIDATOR_STAKE
                        ELSE 0 ]
     /\ lastMisbehavingEpoch = 0
     /\ posAccount = INIT_VALIDATOR_STAKE
     /\ slashPool = 0
-    /\ epoch = UnbondingLength + 1
+    /\ epoch = PipelineLength + UnbondingLength + 1
     /\ lastTx = [ tag |-> "None",
                   sender |-> "",
                   value |-> 0]
@@ -169,8 +169,8 @@ Delegate(sender, amount) ==
                                                          end |-> -1]}]
     \* updates totalDeltas from PipelineLength to UnbondingLength 
     /\ totalDeltas' = [ totalDeltas EXCEPT ![UnbondingLength + PipelineLength] = @ + amount]
-    /\ totalBonded' = [ totalBonded EXCEPT ![sender] = @ + amount]
-    /\ UNCHANGED <<epoch, totalUnbonded, slashPool, unbonded, slashes, enqueuedSlashes, isFrozen, lastMisbehavingEpoch>>
+    /\ totalDelegated' = [ totalDelegated EXCEPT ![sender] = @ + amount]
+    /\ UNCHANGED <<epoch, slashPool, totalBalanceBonds, unbonded, slashes, enqueuedSlashes, isFrozen, lastMisbehavingEpoch>>
 
 \* @type: (Int, Int) => Int;
 BondAfterSlashing(amount, start) == LET
@@ -179,28 +179,33 @@ BondAfterSlashing(amount, start) == LET
                                     IN ApaFoldSeqLeft(F, 0, slashes)
 
 \* @type: (Int, $addr) => { remaining: Int, bonds: Set($bond), bondToAdd: $bond, takeTotalDeltas: Int };
-ComputedUnbonds(totalAmount, sender) == LET 
+ComputedUnbonds(totalAmount, initUnbonded, sender) == LET 
                                         \* @type: ({ remaining: Int, bonds: Set($bond), bondToAdd: $bond, takeTotalDeltas: Int }, $bond) => { remaining: Int, bonds: Set($bond), bondToAdd: $bond, takeTotalDeltas: Int };
                                         F(record, bond) == 
                                           IF record.remaining = 0
                                           THEN record
-                                          ELSE 
-                                            LET min == Min(record.remaining, bond.amount) 
-                                            IN [ remaining |-> record.remaining - min,
+                                          ELSE
+                                            LET min == Min(record.remaining, bond.amount) IN
+                                            LET index == IN
+                                               [ remaining |-> record.remaining - min,
                                                  bonds |-> record.bonds \union {bond},
+                                                 unbonded |-> [ n \in 0..UnbondingLength |-> @ + 
+                                                                IF bond.start <= index
+                                                                THEN min
+                                                                ELSE 0 ]
                                                  bondToAdd |->
                                                    IF bond.amount = min
                                                    THEN [ amount |-> -1, start |-> bond.start, end |-> -1  ]
                                                    ELSE [ amount |-> bond.amount - min, start |-> bond.start, end |-> -1 ],
                                                  takeTotalDeltas |-> record.takeTotalDeltas + min - BondAfterSlashing(min, bond.start) ]
-                                        IN ApaFoldSet(F, [ remaining |-> totalAmount, bonds |-> {}, bondToAdd |-> [ amount |-> -1, start |-> -1, end |-> -1  ], takeTotalDeltas |-> 0], bonded[sender])
+                                        IN ApaFoldSet(F, [ remaining |-> totalAmount, unbonded |-> initUnbonded, bonds |-> {}, bondToAdd |-> [ amount |-> -1, start |-> -1, end |-> -1  ], takeTotalDeltas |-> 0], bonded[sender])
 
 \* @type: ($bond, Int, Int) => $bond;
 FilterBond(bond, remain, e) == IF bond.start = e THEN [ bond EXCEPT !.amount = @ - remain ] ELSE bond
 
 \* Unbond `amount` tokens from a validator
 Unbond(sender, amount) ==
-    /\ amount <= totalBonded[sender] /\ isFrozen[0] /= TRUE
+    /\ amount <= totalDelegated[sender] /\ isFrozen[0] /= TRUE
     /\ lastTx' = [ tag |-> "unbond",
                    sender |-> sender,
                    value |-> amount ]
@@ -216,8 +221,8 @@ Unbond(sender, amount) ==
                         THEN {recordComputeUnbonds.bondToAdd}
                         ELSE {} ] 
          /\ totalDeltas' = [ totalDeltas EXCEPT ![UnbondingLength + PipelineLength] = @ - recordComputeUnbonds.takeTotalDeltas]
-         /\ totalUnbonded' = [ totalUnbonded EXCEPT ![UnbondingLength + PipelineLength] = @ + amount ]
-         /\ totalBonded' = [ totalBonded EXCEPT ! [sender] = @ - amount]
+         /\ totalUnbonded' = [ totalBalanceBonds EXCEPT ![UnbondingLength + PipelineLength] = recordComputeUnbonds.unbonded]
+         /\ totalDelegated' = [ totalDelegated EXCEPT ! [sender] = @ - amount]
          /\ UNCHANGED <<epoch, balanceOf, posAccount, slashPool, slashes, enqueuedSlashes, isFrozen, lastMisbehavingEpoch>>
 
 \* @type: (Int, Seq($slash), Int, Int) => Int;
@@ -250,7 +255,7 @@ Withdraw(sender) ==
     /\ balanceOf' = [ balanceOf EXCEPT ![sender] = @ + amountAfterSlashing]
     /\ posAccount' = posAccount - amountAfterSlashing
     /\ unbonded' = [ unbonded EXCEPT ![sender] = @ \ setUnbonds ]
-    /\ UNCHANGED  <<epoch, totalDeltas, totalUnbonded, totalBonded, slashPool, bonded, slashes, enqueuedSlashes, isFrozen, lastMisbehavingEpoch>>
+    /\ UNCHANGED  <<epoch, totalDeltas, totalUnbonded, totalDelegated, slashPool, bonded, slashes, enqueuedSlashes, isFrozen, lastMisbehavingEpoch>>
 
 (*
 * Computes the index of totalDeltas and totalUnbonded given an epoch e.
@@ -274,16 +279,14 @@ Evidence(e) ==
     /\ lastTx' = [ tag |-> "evidence",
                    sender |-> "",
                    value |-> e ]
-    /\ UNCHANGED <<epoch, balanceOf, posAccount, slashPool, totalDeltas, totalUnbonded, totalBonded, bonded, unbonded, slashes>>
+    /\ UNCHANGED <<epoch, balanceOf, posAccount, slashPool, totalDeltas, totalUnbonded, totalDelegated, bonded, unbonded, slashes>>
 
-(*
-* At the end of an epoch e:
-* 1. 
-*)
+
+
 EndOfEpoch ==
     LET penaltyValEpoch == [ n \in UnbondingLength+1..UnbondingLength + PipelineLength |->
                              IF enqueuedSlashes[0] > 0
-                             THEN (enqueuedSlashes[0] - totalUnbonded[n])*SLASH_RATE
+                             THEN (enqueuedSlashes[0]-totalUnbonds[n][UnbondingLength+PipelineLength-n])*SLASH_RATE
                              ELSE 0 ] IN
     LET totalSlashed == enqueuedSlashes[0] IN
     /\ totalDeltas' = [ n \in 0..UnbondingLength + PipelineLength |-> 
@@ -293,10 +296,10 @@ EndOfEpoch ==
                           THEN totalDeltas[n+1] - penaltyValEpoch[n+1]
                           ELSE totalDeltas[n+1]
                         ELSE totalDeltas[n] - penaltyValEpoch[n] ]
-    /\ totalUnbonded' = [ n \in 0..UnbondingLength + PipelineLength |-> 
+    /\ totalBalanceBonds' = [ n \in 1..UnbondingLength + PipelineLength |-> 
                           IF n < UnbondingLength + PipelineLength
-                          THEN totalUnbonded[n+1] - totalUnbonded[0]
-                          ELSE totalUnbonded[n] - totalUnbonded[0] ]
+                          THEN totalBalanceBonds[n+1] - totalBalanceBonds[1]
+                          ELSE totalBalanceBonds[n] - totalBalanceBonds[1] ]
     /\ enqueuedSlashes' = [ n \in 0..UnbondingLength |-> 
                             IF n < UnbondingLength
                             THEN enqueuedSlashes[n+1]
@@ -314,7 +317,7 @@ EndOfEpoch ==
                    value |-> epoch ]
     /\ posAccount' = posAccount - totalSlashed
     /\ slashPool' = slashPool + totalSlashed
-    /\ UNCHANGED <<balanceOf, totalBonded, bonded, unbonded, lastMisbehavingEpoch>>
+    /\ UNCHANGED <<balanceOf, totalDelegated, bonded, unbonded, lastMisbehavingEpoch>>
 
 Next ==
     IF lastTx.tag \in TRANSACTIONS
