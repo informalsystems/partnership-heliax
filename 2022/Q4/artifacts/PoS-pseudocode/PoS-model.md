@@ -513,7 +513,7 @@ end_of_epoch()
       forall (offset in 1..unbonding_length) do
         forall (unbond in validators[validator_address].total_unbonded[epoch] s.t. unbond.start <= slash.epoch)
           total_unbonded += unbond.amount
-        var this_slash = (total_staked + total_bonded - total_unbonded) * slash.rate
+        var this_slash = (total_staked - total_unbonded) * slash.rate
         var diff_slashed_amount = last_slash - this_slash
         last_slash = this_slash
         update_total_deltas(validator_address, offset, diff_slashed_amount)
