@@ -280,8 +280,8 @@ func unbond(validator_address, delegator_address, unbond_amount)
           //The current model disregards a corner case that should be taken care of in the implementation:
           //- Assume a user delegates 10 tokens to a validator at epoch e1
           //- Assume the user unbonds twice 5 tokens from the same validator in the same epoch in two different transactions e2
-          //- When executing the first undelegate tx, the model creates the record UnbondRecord{amount: 5, start: e1 } and updates the bond to 5 tokens
-          //- When executing the second undelegate tx, the model creates the same record UnbondRecord{amount: 5, start: e1 } and removes the bond.
+          //- When executing the first undelegate tx, the model creates the record UnbondRecord{amount: 5, start: e1} and updates the bond to 5 tokens
+          //- When executing the second undelegate tx, the model creates the same record UnbondRecord{amount: 5, start: e1} and removes the bond.
           //- The problem is that we keep unbond records in a set and when we try to add the second record, since it is a duplicate, it will be discarded.
           //It is an easy fix I'd say: use a bag instead of a set to allow duplicates, or check if the set includes the record and act upon (remove it, create a new one with double the amount, and add it).
           //Same below
