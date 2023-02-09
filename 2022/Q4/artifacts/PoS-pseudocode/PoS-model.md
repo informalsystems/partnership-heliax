@@ -17,12 +17,16 @@ type JailRecord struct {
   epoch Epoch
 }
 
+type UnbondRecord struct {
+  amount uint
+  start Epoch
+}
+
 type Validator struct {
   consensus_key map<Epoch, Key>
   state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
   total_unbonds map<Epoch, amount:int>
-  total_bonds map<Epoch, amount:int>
   voting_power map<Epoch, VotingPower>
   reward_address Addr
   jail_record JailRecord
@@ -231,7 +235,6 @@ func bond(validator_address, delegator_address, amount)
     //debit amount from delegator account and credit it to the PoS account
     balances[delegator_address] -= amount
     balances[pos] += amount
-    validators[validator_address].total_bonds[cur_epoch+pipeline_length] += amount
     update_total_deltas(validator_address, pipeline_lenght, amount)
     update_voting_power(validator_address, pipeline_lenght)
     update_total_voting_power(pipeline_lenght)
@@ -274,14 +277,15 @@ func unbond(validator_address, delegator_address, unbond_amount)
           remain = 0
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= remain*slash.rate
+           validators[validator_address].total_unbonds[cur_epoch+pipeline_length] = {UnbondRecord{amount: remain, start: start}} \union validators[validator_address].total_unbonds[cur_epoch+pipeline_length]
         //If the remaining is greater or equal than the next bond amount
         else if amount <= remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start] = 0
           unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] = amount
           remain -= amount
+          validators[validator_address].total_unbonds[cur_epoch+pipeline_length] = {UnbondRecord{amount: amount, start: start}} \union validators[validator_address].total_unbonds[cur_epoch+pipeline_length]
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= amount*slash.rate
-      validators[validator_address].total_unbonds[cur_epoch+pipeline_length] += unbond_amount
       update_total_deltas(validator_address, pipeline_length, -1*amount_after_slashing)
       update_voting_power(validator_address, pipeline_length)
       update_total_voting_power(pipeline_length)
@@ -503,13 +507,13 @@ end_of_epoch()
       //find the total unbonded from the slash epoch up to the current epoch first
       //a..b notation determines an integer range: all integers between a and b inclusive
       forall (epoch in slash.epoch+1..cur_epoch) do
-        total_unbonded += validators[validator_address].total_unbonded[epoch]
-        total_bonded += validators[validator_address].total_bonded[epoch]
+        forall (unbond in validators[validator_address].total_unbonded[epoch] s.t. unbond.start <= slash.epoch)
+          total_unbonded += unbond.amount
 
       var last_slash = 0
       forall (offset in 1..unbonding_length) do
-        total_unbonded += validators[validator_address].total_unbonded[cur_epoch + offset]
-        total_bonded += validators[validator_address].total_bonded[cur_epoch + offset]
+        forall (unbond in validators[validator_address].total_unbonded[epoch] s.t. unbond.start <= slash.epoch)
+          total_unbonded += unbond.amount
         var this_slash = (total_staked + total_bonded - total_unbonded) * slash.rate
         var diff_slashed_amount = last_slash - this_slash
         last_slash = this_slash
