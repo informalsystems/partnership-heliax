@@ -13,9 +13,9 @@
 
   @typeAlias: totalDeltas = Int -> Int;
 
-  @typeAlias: totalBalanceBonds = Int -> Int;
+  @typeAlias: totalUnbonded = Int -> Set($unbond);
 
-  @typeAlias: totalDelegated = $addr -> Int;
+  @typeAlias: totalBonded = $addr -> Int;
 
   @typeAlias: slashes = Seq($slash);
 
@@ -55,8 +55,8 @@
     bonded: $bonded,
     unbonded: $unbonded,
     totalDeltas: $totalDeltas,
-    totalBalanceBonds: $totalBalanceBonds,
-    totalDelegated: $totalDelegated,
+    totalUnbonded: $totalUnbonded,
+    totalBonded: $totalBonded,
     posAccount: Int,
     slashPool: Int,
     slashes: $slashes,
