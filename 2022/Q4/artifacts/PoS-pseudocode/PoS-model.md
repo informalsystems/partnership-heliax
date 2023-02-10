@@ -274,7 +274,6 @@ func unbond(validator_address, delegator_address, unbond_amount)
         if amount > remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start] = amount - remain
           unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] = remain
-          remain = 0
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= remain*slash.rate
           //The current model disregards a corner case that should be taken care of in the implementation:
@@ -286,14 +285,15 @@ func unbond(validator_address, delegator_address, unbond_amount)
           //It is an easy fix I'd say: use a bag instead of a set to allow duplicates, or check if the set includes the record and act upon (remove it, create a new one with double the amount, and add it).
           //Same below
           validators[validator_address].total_unbonds[cur_epoch+pipeline_length] = {UnbondRecord{amount: remain, start: start}} \union validators[validator_address].total_unbonds[cur_epoch+pipeline_length]
+          remain = 0
         //If the remaining is greater or equal than the next bond amount
         else if amount <= remain && remain > 0 do
           bonds[delegator_address][validator_address].deltas[start] = 0
           unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] = amount
-          remain -= amount
           validators[validator_address].total_unbonds[cur_epoch+pipeline_length] = {UnbondRecord{amount: amount, start: start}} \union validators[validator_address].total_unbonds[cur_epoch+pipeline_length]
           forall (slash in slashes[validator_address] s.t. start <= slash.epoch)
             amount_after_slashing -= amount*slash.rate
+          remain -= amount
       update_total_deltas(validator_address, pipeline_length, -1*amount_after_slashing)
       update_voting_power(validator_address, pipeline_length)
       update_total_voting_power(pipeline_length)
