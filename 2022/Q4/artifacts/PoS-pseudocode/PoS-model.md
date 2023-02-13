@@ -22,6 +22,11 @@ type UnbondRecord struct {
   start Epoch
 }
 
+type SlashedAmount struct {
+  epoch Epoch
+  amount uint
+}
+
 type Validator struct {
   consensus_key map<Epoch, Key>
   state map<Epoch, {inactive, candidate}>
