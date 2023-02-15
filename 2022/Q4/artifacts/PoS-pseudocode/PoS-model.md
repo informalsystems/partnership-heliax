@@ -31,7 +31,7 @@ type Validator struct {
   consensus_key map<Epoch, Key>
   state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
-  total_unbonds map<Epoch, amount:int>
+  total_unbonds map<Epoch, Set<UnbondRecord>>
   voting_power map<Epoch, VotingPower>
   reward_address Addr
   jail_record JailRecord
@@ -519,12 +519,12 @@ end_of_epoch()
       //find the total unbonded from the slash epoch up to the current epoch first
       //a..b notation determines an integer range: all integers between a and b inclusive
       forall (epoch in slash.epoch+1..cur_epoch) do
-        forall (unbond in validators[validator_address].total_unbonded[epoch] s.t. unbond.start <= slash.epoch)
+        forall (unbond in validators[validator_address].total_unbonds[epoch] s.t. unbond.start <= slash.epoch)
           total_unbonded += unbond.amount
 
       var last_slash = 0
       forall (offset in 1..unbonding_length) do
-        forall (unbond in validators[validator_address].total_unbonded[epoch] s.t. unbond.start <= slash.epoch)
+        forall (unbond in validators[validator_address].total_unbonds[epoch] s.t. unbond.start <= slash.epoch)
           total_unbonded += unbond.amount
         var this_slash = (total_staked - total_unbonded) * slash.rate
         var diff_slashed_amount = last_slash - this_slash
