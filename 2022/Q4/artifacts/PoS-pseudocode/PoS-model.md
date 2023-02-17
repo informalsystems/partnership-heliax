@@ -538,6 +538,7 @@ end_of_epoch()
           total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond.amount)
         var this_slash = (total_staked - total_unbonded) * slash.rate
         var diff_slashed_amount = last_slash - this_slash
+        last_slash = this_slash
         update_total_deltas(validator_address, offset, diff_slashed_amount)
         update_voting_power(validator_address, offset)
         total_unbonded = 0
