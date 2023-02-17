@@ -525,7 +525,8 @@ end_of_epoch()
 
       var total_unbonded = 0
       var last_slash = 0
-      forall (offset in 1..unbonding_length) do
+      // up to pipeline_length because there cannot be any unbond in a greater ß (cur_epoch+pipeline_length is the upper bound)
+      forall (offset in 1..pipeline_length) do
         forall (unbond in validators[validator_address].set_unbonds[cur_epoch + offset] s.t. unbond.start <= slash.epoch) do
           union_unbonded = union_unbonded \union {unbond}
         forall (unbond in union_unbonded) do
