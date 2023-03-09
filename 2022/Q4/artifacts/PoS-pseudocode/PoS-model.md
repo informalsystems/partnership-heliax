@@ -272,7 +272,7 @@ func unbond(validator_address, delegator_address, total_amount)
     //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
     if (sum{amount | <start, amount> in delbonds} >= total_amount) then
       var remain = total_amount
-      var amount_after_slashing = total_amount
+      var amount_after_slashing = 0
       //Iterate over bonds and create unbond
       forall (<start, amount> in delbonds while remain > 0) do
         //Take the minimum between the remainder and the unbond. This is equal to amount if remain > amount and remain otherwise 
