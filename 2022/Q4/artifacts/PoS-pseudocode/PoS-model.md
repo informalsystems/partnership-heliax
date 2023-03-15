@@ -272,7 +272,7 @@ func unbond(validator_address, delegator_address, total_amount)
     //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
     if (sum{amount | <start, amount> in delbonds} >= total_amount) then
       var remain = total_amount
-      var amount_after_slashing = total_amount
+      var amount_after_slashing = 0
       //Iterate over bonds and create unbond
       forall (<start, amount> in delbonds while remain > 0) do
         //Take the minimum between the remainder and the unbond. This is equal to amount if remain > amount and remain otherwise 
@@ -503,12 +503,13 @@ func compute_stake_fraction(infraction, voting_power){
 ```go
 end_of_epoch()
 {
+  //iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
+  var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1}
+  //calculate the slash rate (Step 2.2 of cubic slashing)
+  var rate = compute_final_rate(set_slashes)
+
   var set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
   forall (validator_address in set_validators) do
-    //iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
-    var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1 && s.validator == validator_address}
-    //calculate the slash rate (Step 2.2 of cubic slashing)
-    var rate = compute_final_rate(set_slashes)
     forall (slash in {s | s in enqueued_slashes[cur_epoch] && s.validator == validator_address}) do
       //set the slash on the now "finalized" slash amount in storage (Step 2.3 of cubic slashing)
       slash.rate = rate
