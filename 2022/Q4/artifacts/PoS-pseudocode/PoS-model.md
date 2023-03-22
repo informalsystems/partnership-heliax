@@ -523,7 +523,7 @@ end_of_epoch()
       forall (epoch in slash.epoch+1..cur_epoch) do
         forall (unbond in validators[validator_address].set_unbonds[epoch] s.t. unbond.start <= slash.epoch)
           var set_prev_slashes = {s | s in slashes[validator_address] && unbond.start <= s.epoch && s.epoch + unbonding_length < slash.epoch}
-          total_unbonded = compute_amount_after_slashing(set_prev_slashes, unbond.amount)
+          total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond.amount)
 
       var last_slash = 0
       // up to pipeline_length because there cannot be any unbond in a greater ß (cur_epoch+pipeline_length is the upper bound)
