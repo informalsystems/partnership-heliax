@@ -319,15 +319,15 @@ func withdraw(validator_address, delegator_address)
 ```go
 compute_amount_after_slashing(set_slashes, amount) {
   var computed_amounts = {}
-    var updated_amount = amount
-    forall (slash in set_slashes in slash.epoch order) do
-      //Update amount with slashes that happened more than `unbonding_length` before this slash
-      forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length < slash.epoch) do
-        updated_amount -= slashed_amount.amount
-        computed_amounts = computed_amounts \ {slashed_amount}
-      computed_amounts = computed_amounts \union {SlashedAmount{epoch: slash.epoch, amount: updated_amount*slash.rate}}
+  var updated_amount = amount
+  forall (slash in set_slashes in slash.epoch order) do
+    //Update amount with slashes that happened more than `unbonding_length` before this slash
+    forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length < slash.epoch) do
+      updated_amount -= slashed_amount.amount
+      computed_amounts = computed_amounts \ {slashed_amount}
+    computed_amounts = computed_amounts \union {SlashedAmount{epoch: slash.epoch, amount: updated_amount*slash.rate}}
 
-    return updated_amount - sum({computed_amount.amount | computed_amount in computed_amounts})
+  return updated_amount - sum({computed_amount.amount | computed_amount in computed_amounts})
 }
 ```
 
