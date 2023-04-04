@@ -7,9 +7,11 @@ UserAddrs == { "user2", "val"}
 
 Validator == "val"
 
-PipelineLength == 1
+PipelineLength == 2
 
-UnbondingLength == 2
+\* Invariant
+\* UnbondingLength >= PipelineLength
+UnbondingLength == 4
 
 \* Should at least be UnbondingLength
 MisbehavingWindow == UnbondingLength
