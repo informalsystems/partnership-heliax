@@ -541,7 +541,6 @@ end_of_epoch()
         last_slash = this_slash
         update_total_deltas(validator_address, offset, diff_slashed_amount)
         update_voting_power(validator_address, offset)
-        total_unbonded = 0
     //unfreeze the validator (Step 2.5 of cubic slashing)
     //this step is done in advance when the evidence is found
     //by setting validators[validator_address].frozen[cur_epoch+unbonding_length+1]=false
