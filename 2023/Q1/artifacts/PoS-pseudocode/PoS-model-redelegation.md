@@ -36,6 +36,7 @@ type Validator struct {
   reward_address Addr
   jail_record JailRecord
   frozen map<Epoch, bool>
+  redelegations map<Addr, map<Addr, Epoch>>
 }
 
 type Bond struct {
@@ -58,9 +59,6 @@ type Slash struct {
 }
 
 type Redelegation struct {
-  start Epoch
-  end Epoch
-  unbonded Epoch
   validator Addr
   amount uint
 }
@@ -96,6 +94,8 @@ validators[] in Addr → Validator //map from address to validator
 balances[] in Addr → int //map from address to integer
 bonds[][] in (Addr X Addr) → Bond //map from address to map from address to bond
 unbonds[][] in (Addr X Addr) → Unbond  //map from (address, address) to unbond
+redelegated_bonds[][][] in (Addr X Addr X Epoch) → Redelegation //map from (address, address, epoch) to redelegation
+redelegated_unbonds[][][] in (Addr X Addr X (Epoch, Epoch)) → Redelegation //map from (address, address, (epoch, epoch)) to redelegation
 slashes[] in Addr → 2^Slash //map from address to list of slashes
 enqueued_slashes[] in Epoch → 2^Slash //map from epoch to list of slashes
 
@@ -216,8 +216,8 @@ tx_undelegate(validator_address, delegator_address, amount)
 func is_chained_redelegation(dest_validator_address, delegator_address)
   // avoid iteration over validators and do it over incoming_redelegations
   forall (val in validators) do
-    var incoming = validators[dest_validator_address].incoming_redelegations[val][delegator_address]
-    if (incoming != ⊥ && incoming.end + unbonding_length > cur_epoch) then
+    var epoch = validators[dest_validator_address].redelegations[val][delegator_address]
+    if (epoch >= 0 && epoch + unbonding_length > cur_epoch) then
       return true
   return false
 ```
@@ -232,6 +232,8 @@ tx_redelegate(src_validator_address, dest_validator_address, delegator_address)
     // or if they do, they cannot be slashed anymore (`end + unbonding_length <= cur_epoch`)
     if is_chained_redelegation(dest_validator_address, delegator_address) then
       return
+    //save the epoch at which the redelegation occurs to track chained redelegations
+    validators[dest_validator_address].redelegations[src_validator_address][delegator_address] = cur_epoch
     // Find the sum of bonded tokens to `src_validator_address`
     var delbonds = {<start, amount> | amount = bonds[delegator_address][src_validator_address].deltas[start] > 0 && start <= cur_epoch + unbonding_length}
     var bonded_tokens = sum{amount | <start, amount> in delbonds}
@@ -242,8 +244,8 @@ tx_redelegate(src_validator_address, dest_validator_address, delegator_address)
     // add a bond in the `dest_validator_address` for the amount after slashing
     // done manually to avoid account transfer
     bonds[delegator_address][dest_validator_address].deltas[cur_epoch+pipeline_length] += amount_after_slashing
-    bonds_redelegations[delegator_address][dest_validator_address][cur_epoch+pipeline_length] = RedelegatedBond{validator: src_validator_address,
-                                                                                                                amount: amount_after_slashing}
+    redelegated_bonds[delegator_address][dest_validator_address][cur_epoch+pipeline_length] = Redelegation{validator: src_validator_address,
+                                                                                                           amount: amount_after_slashing}
     update_total_deltas(dest_validator_address, pipeline_length, amount_after_slashing)
     update_voting_power(dest_validator_address, pipeline_length)
     update_total_voting_power(pipeline_length)
@@ -312,24 +314,26 @@ func unbond(validator_address, delegator_address, total_amount, record_unbonds)
       //Iterate over bonds and create unbond
       forall (<start, amount> in delbonds while remain > 0) do
         //Retrieve the bond's associated redelegation record (if any)
-        var redelegation_record = redelegations[delegator_address][dest_validator_address][start]
+        var redelegation_record = redelegated_bonds[delegator_address][validator_address][start]
         //Take the minimum between the remainder and the unbond. This is equal to amount if remain > amount and remain otherwise 
         var amount_unbonded = min{amount, remain}
-        //if there is redelegation record and the redelegated amount is less than the bond amount,
-        //then compute slashes separately: for redelegated and non-redelegated amount
-        if redelegation_record != ⊥ && redelegation_record.amount < amount_unbonded then
+        var redelegated_amount = 0
+        if redelegation_record != ⊥ then
+          redelegated_amount = redelegation_record.amount
+
+        var amount_unbonded_after_slashing = 0
+        //compute amount after slashing if some of the tokens do not come from redelegation
+        if redelegated_amount < amount_unbonded then 
           // set of slashes that happened while the bond was contributing to the validator's stake
           var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch }
-          var amount_unbonded_after_slashing = compute_amount_after_slashing(set_slashes, amount_unbonded - redelegation_record.amount)
-          // add slashes if the tokens were redelegated
-          set_slashes = set_slashes \union slashes_due_redelegation(redelegation_record, start)
-          amount_unbonded_after_slashing += compute_amount_after_slashing(set_slashes, redelegation_record.amount)
-        else
-          // set of slashes that happened while the bond was contributing to the validator's stake
-          var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch }
-          // add slashes if the tokens were redelegated
-          set_slashes = set_slashes \union slashes_due_redelegation(redelegation_record)
-          var amount_unbonded_after_slashing = compute_amount_after_slashing(set_slashes, amount_unbonded)
+          amount_unbonded_after_slashing = compute_amount_after_slashing(set_slashes, amount_unbonded - redelegated_amount)
+        //compute amount after slashing  of the tokens coming from redelegation
+        if redelegation_record != ⊥ then
+          set_slashes = set_slashes \union {slash | slash in slashes[redelegation_record.validator] &&
+                                                    //start - pipeline_length is the epoch when the redelegation was issued
+                                                    //any slashed processed at an epoch < slash - pipeline_length - unbonding_length has been applied already
+                                                    start - pipeline_length - unbonding_length <= slash.epoch < start}
+          amount_unbonded_after_slashing += compute_amount_after_slashing(set_slashes, min{redelegated_amount, amount_unbonded})
       
         //update bond and create new unbond if record_unbonds=true
         bonds[delegator_address][validator_address].deltas[start] = amount - amount_unbonded
@@ -341,14 +345,17 @@ func unbond(validator_address, delegator_address, total_amount, record_unbonds)
         //manage redelegation records
         if redelegation_record != ⊥ then
           if record_unbonds then
-            //TODO: there may exists a record already
-            unbonds_redelegations[delegator_address][dest_validator_address][start, end] = Redelegation{validator: src_validator_address,
-                                                                                                        redelegation_record.amount - amount_unbonded}
+            update_unbond_redelegation_record(delegator_address,
+                                              validator_address,
+                                              redelegation_record.validator,
+                                              start,
+                                              end,
+                                              min{redelegation_record.amount, amount_unbonded})
           if redelegation_record.amount > amount_unbonded then
-            bonds_redelegations[delegator_address][dest_validator_address][start] = Redelegation{validator: src_validator_address,
-                                                                                                 redelegation_record.amount - amount_unbonded}
+            redelegated_bonds[delegator_address][validator_address][start] = Redelegation{validator: redelegation_record.validator,
+                                                                                          amount: redelegation_record.amount - amount_unbonded}
           else
-            bonds_redelegations[delegator_address][dest_validator_address][start] = ⊥
+            redelegated_bonds[delegator_address][validator_address][start] = ⊥
   
         amount_after_slashing += amount_unbonded_after_slashing
         //The current model disregards a corner case that should be taken care of in the implementation:
@@ -370,16 +377,15 @@ func unbond(validator_address, delegator_address, total_amount, record_unbonds)
 ```
 
 ```go
-func slashes_due_redelegation(redelegation_record, end_redelegation)
+func update_unbond_redelegation_record(delegator_address, src_validator_address, dest_validator_address, start, end, amount)
 {
-  if redelegation_record == ⊥ then
-    return {}
-  //all slashes for the source validator while the tokens were delegated it
-  return {slash | slash in slashes[redelegation_record.validator] &&
-                  //redelegation_record.end - pipeline_length is the epoch when the redelegation was issued
-                  //any slashed processed at an epoch < redelegation_record.end - pipeline_length has been applied already
-                  end_redelegation - pipeline_length - unbonding_length <= slash.epoch < end_redelegation}
-}
+  var unbond_redelegation_record = redelegated_unbonds[delegator_address][dest_validator_address][start, end]
+  if (unbond_redelegation_record = ⊥) then
+    var new_record = Redelegation{validator: src_validator_address, amount: amount}
+  else
+    var new_record = Redelegation{validator: src_validator_address, amount: unbond_redelegation_record.amount + amount}
+  redelegated_unbonds[delegator_address][dest_validator_address][start, end] = new_record
+}   
 ```
 
 ```go
@@ -390,19 +396,34 @@ func withdraw(validator_address, delegator_address)
   var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
   //substract any pending slash before withdrawing
   forall (<start,end,amount,redelegation_record> in selfunbonds) do
-    // set of slashes that happened while the bond associated with the unbond was contributing to the validator's stake
+    //retrieve redelegation record
+    var redelegation_record = redelegated_unbonds[delegator_address][validator_address][start, end]
+    var redelegated_amount = 0
+    if redelegation_record != ⊥ then
+      redelegated_amount = redelegation_record.amount
+    // set of slashes that happened while the bond was contributing to the validator's stake
     var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch && slash.epoch < end - unbonding_length }
-    set_slashes = set_slashes \union slashes_due_redelegation(redelegation_record)
-    var amount_after_slashing = compute_amount_after_slashing(set_slashes, amount)
+    var amount_after_slashing = compute_amount_after_slashing(set_slashes, amount - redelegated_amount)
+    if redelegation_record != ⊥ then
+      // add slashes if the tokens were redelegated
+      set_slashes = set_slashes \union set_slashes = set_slashes \union {slash | slash in slashes[redelegation_record.validator] &&
+                                                    //start - pipeline_length is the epoch when the redelegation was issued
+                                                    //any slashed processed at an epoch < slash - pipeline_length - unbonding_length has been applied already
+                                                    start - pipeline_length - unbonding_length <= slash.epoch < start}
+      amount_after_slashing += compute_amount_after_slashing(set_slashes, redelegated_amount)
+
     balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
     //remove unbond
     unbonds[delegator_address][validator_address].deltas[(start,end)] = 0
+    //manage redelegation records
+    redelegated_unbonds[delegator_address][dest_validator_address][start, end] = ⊥
+
 }
 ```
 
 ```go
-compute_amount_after_slashing(set_slashes, amount) {
+func compute_amount_after_slashing(set_slashes, amount) {
   var computed_amounts = {}
     var updated_amount = amount
     forall (slash in set_slashes in slash.epoch order) do
