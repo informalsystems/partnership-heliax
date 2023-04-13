@@ -638,8 +638,8 @@ end_of_epoch()
 
       forall (val in validators) do
         var pairs = { pair = <delegator, <epoch, redelegation> | pair in validators[var].redelegations[validator_address] &&
-                                                  pair !=⊥ && 
-                                                  redelegation.epoch - unbonding_length <= slash.epoch < redelegation.epoch + pipeline_length}
+                                                                 pair !=⊥ && 
+                                                                 redelegation.epoch - unbonding_length <= slash.epoch < redelegation.epoch + pipeline_length}
         forall (<delegator, redelegation> in pairs) do
           var staked_redelegated = 
           slash_redelegated_validator(val, validator_address, slash, redelegation.amount)
@@ -728,26 +728,30 @@ func slash_redelegated_validator(validator_address, src_validator, slash, staked
   //find the total unbonded from the slash epoch up to the current epoch first
   //a..b notation determines an integer range: all integers between a and b inclusive
   forall (epoch in slash.epoch+1..cur_epoch) do
-    forall (unbond in validators[validator_address].set_unbonds[epoch] s.t. unbond.start <= slash.epoch && 
+    //filter those unbonds that were contributing to the stake when the validator misbehaved
+    forall (unbond in validators[validator_address].set_unbonds[epoch] s.t. unbond.start - unbonding_length - pipeline_length <= slash.epoch && 
                                                                             unbond.redelegation != ⊥ &&
-                                                                            unbond.redelegation.validator == src_validator &&
-                                                                            )
-      var set_prev_slashes = {s | s in slashes[validator_address] && unbond.start <= s.epoch && s.epoch + unbonding_length < slash.epoch}
-      total_unbonded = compute_amount_after_slashing(set_prev_slashes, unbond.amount)
+                                                                            unbond.redelegation.validator == src_validator) do
+      //TODO: check that this set is not always empty
+      var set_slashes = {s | s in slashes[validator_address] &&
+                             unbond.start - unbonding_length - pipeline_length <= s.epoch &&
+                             s.epoch + unbonding_length < slash.epoch }
+
+      total_unbonded = compute_amount_after_slashing(set_slashes, unbond.amount)
 
   var last_slash = 0
   // up to pipeline_length because there cannot be any unbond in a greater ß (cur_epoch+pipeline_length is the upper bound)
   forall (offset in 1..pipeline_length) do
-    forall (unbond in validators[validator_address].set_unbonds[cur_epoch + offset] s.t. unbond.start <= slash.epoch) do
-      // We only need to apply a slash s if s.epoch < unbond.end - unbonding_length
-      // It is easy to see that s.epoch + unbonding_length < slash.epoch implies s.epoch < unbond.end - unbonding_length
-      // 1) slash.epoch = cur_epoch - unbonding_length
-      // 2) unbond.end = cur_epoch + offset + unbonding_length => cur_epoch = unbond.end - offset - unbonding_length
-      // By 1) s.epoch + unbonding_length < cur_epoch - unbonding_length
-      // By 2) s.epoch + unbonding_length < unbond.end - offset - 2*unbonding_length => s.epoch < unbond.end - offset - 3*unbonding_length, as required.
-      var set_prev_slashes = {s | s in slashes[validator_address] && unbond.start <= s.epoch && s.epoch + unbonding_length < slash.epoch}
-      total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond.amount)
-    var this_slash = (total_staked - total_unbonded) * slash.rate
+    forall (unbond in validators[validator_address].set_unbonds[cur_epoch + offset] s.t. unbond.start - unbonding_length - pipeline_length <= slash.epoch && 
+                                                                                         unbond.redelegation != ⊥ &&
+                                                                                         unbond.redelegation.validator == src_validator) do
+
+      //TODO: check that this set is not always empty
+      var set_slashes = {s | s in slashes[validator_address] &&
+                             unbond.start - unbonding_length - pipeline_length <= s.epoch &&
+                             s.epoch + unbonding_length < slash.epoch }
+      total_unbonded += compute_amount_after_slashing(set_slashes, unbond.amount)
+    var this_slash = (staked_amount - total_unbonded) * slash.rate
     var diff_slashed_amount = last_slash - this_slash
     last_slash = this_slash
     update_total_deltas(validator_address, offset, diff_slashed_amount)
