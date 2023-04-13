@@ -252,7 +252,7 @@ tx_redelegate(src_validator_address, dest_validator_address, delegator_address)
                                                                                                            amount: amount_after_slashing}
     //save the epoch at which the redelegation occurs to track chained redelegations
     validators[dest_validator_address].redelegations[src_validator_address][delegator_address] = IncomingRedelegation{epoch: cur_epoch,
-                                                                                                                      amoun: amount_after_slashing}
+                                                                                                                      amount: amount_after_slashing}
     update_total_deltas(dest_validator_address, pipeline_length, amount_after_slashing)
     update_voting_power(dest_validator_address, pipeline_length)
     update_total_voting_power(pipeline_length)
@@ -408,7 +408,7 @@ func withdraw(validator_address, delegator_address)
 {
   var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
   //substract any pending slash before withdrawing
-  forall (<start,end,amount,redelegation_record> in selfunbonds) do
+  forall (<start,end,amount,redelegation_record> in delunbonds) do
     //retrieve redelegation record
     var redelegation_record = redelegated_unbonds[delegator_address][validator_address][start, end]
     var redelegated_amount = 0
@@ -637,7 +637,7 @@ end_of_epoch()
       slash_misbehaving_validator(validator_address, slash, staked_amount)
 
       forall (val in validators) do
-        var pairs = { pair = <delegator, <epoch, redelegation> | pair in validators[var].redelegations[validator_address] &&
+        var pairs = { pair = <delegator, <epoch, redelegation> | pair in validators[val].redelegations[validator_address] &&
                                                                  pair !=⊥ && 
                                                                  redelegation.epoch - unbonding_length <= slash.epoch < redelegation.epoch + pipeline_length}
         forall (<delegator, redelegation> in pairs) do
