@@ -634,7 +634,7 @@ end_of_epoch()
       slash.rate = rate
       append(slashes[validator_address], slash)
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
-      slash_misbehaving_validator(validator_address, slash, staked_amount)
+      slash_misbehaving_validator(validator_address, slash, total_staked)
 
       forall (val in validators) do
         var pairs = { pair = <delegator, <epoch, redelegation> | pair in validators[val].redelegations[validator_address] &&
