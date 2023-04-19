@@ -634,7 +634,7 @@ end_of_epoch()
       slash.rate = rate
       append(slashes[validator_address], slash)
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
-      slash_misbehaving_validator(validator_address, slash, staked_amount)
+      slash_misbehaving_validator(validator_address, slash, total_staked)
 
       forall (val in validators) do
         var pairs = { pair = <delegator, <epoch, redelegation> | pair in validators[val].redelegations[validator_address] &&
@@ -654,7 +654,7 @@ end_of_epoch()
 ```
 
 ```go
-func slash_misbehaving_validator(src_validator_address, dest_validator_address, slash, amount)
+func slash_misbehaving_validator(src_validator_address, dest_validator_address, slash, total_staked)
 {
   var total_unbonded = 0
   //find the total unbonded from the slash epoch up to the current epoch first
@@ -677,7 +677,7 @@ func slash_misbehaving_validator(src_validator_address, dest_validator_address, 
       var set_slashes = {s | s in slashes[validator_address] &&
                              unbond.start <= s.epoch &&
                              s.epoch + unbonding_length < slash.epoch }
-      var total_unbonded = compute_amount_after_slashing(set_slashes, unbond.amount - redelegated_amount)
+     total_unbonded += compute_amount_after_slashing(set_slashes, unbond.amount - redelegated_amount)
       if redelegation_record != ⊥ then
         // add slashes if the tokens were redelegated
         set_slashes = set_slashes \union {s | s in slashes[redelegation_record.validator] &&
