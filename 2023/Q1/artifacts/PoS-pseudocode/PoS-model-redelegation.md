@@ -696,22 +696,22 @@ func slash_misbehaving_validator(src_validator_address, dest_validator_address, 
   forall (offset in 1..pipeline_length) do
     forall (unbond in validators[validator_address].set_unbonds[cur_epoch + offset] s.t. unbond.start <= slash.epoch) do
 
-    //retrieve redelegation record
-    var redelegation_record = unbond.redelegation
-    var redelegated_amount = 0
-    if redelegation_record != ⊥ then
-      redelegated_amount = redelegation_record.amount
-    // set of slashes that happened while the bond was contributing to the validator's stake
-    var set_slashes = {s | s in slashes[validator_address] &&
-                            unbond.start <= s.epoch &&
-                            s.epoch + unbonding_length < slash.epoch }
-    var total_unbonded = compute_amount_after_slashing(set_slashes, unbond.amount - redelegated_amount)
-    if redelegation_record != ⊥ then
-      // add slashes if the tokens were redelegated
-      set_slashes = set_slashes \union {s | s in slashes[redelegation_record.validator] &&
-                                            unbond.start - pipeline_length - unbonding_length <= s.epoch < unbond.start &&
-                                            s.epoch + unbonding_length < slash.epoch}
-      total_unbonded += compute_amount_after_slashing(set_slashes, redelegated_amount)
+      //retrieve redelegation record
+      var redelegation_record = unbond.redelegation
+      var redelegated_amount = 0
+      if redelegation_record != ⊥ then
+        redelegated_amount = redelegation_record.amount
+      // set of slashes that happened while the bond was contributing to the validator's stake
+      var set_slashes = {s | s in slashes[validator_address] &&
+                              unbond.start <= s.epoch &&
+                              s.epoch + unbonding_length < slash.epoch }
+      var total_unbonded = compute_amount_after_slashing(set_slashes, unbond.amount - redelegated_amount)
+      if redelegation_record != ⊥ then
+        // add slashes if the tokens were redelegated
+        set_slashes = set_slashes \union {s | s in slashes[redelegation_record.validator] &&
+                                              unbond.start - pipeline_length - unbonding_length <= s.epoch < unbond.start &&
+                                              s.epoch + unbonding_length < slash.epoch}
+        total_unbonded += compute_amount_after_slashing(set_slashes, redelegated_amount)
 
     var this_slash = (total_staked - total_unbonded) * slash.rate
     var diff_slashed_amount = last_slash - this_slash
