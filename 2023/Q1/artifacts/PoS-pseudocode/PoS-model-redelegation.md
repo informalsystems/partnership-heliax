@@ -37,7 +37,7 @@ type Validator struct {
   reward_address Addr
   jail_record JailRecord
   frozen map<Epoch, bool>
-  redelegations map<Addr, map<Addr, Epoch>>
+  redelegations map<Addr, map<Addr, IncomingRedelegation>>
 }
 
 type Bond struct {
