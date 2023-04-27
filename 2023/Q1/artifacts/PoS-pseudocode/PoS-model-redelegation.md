@@ -37,7 +37,8 @@ type Validator struct {
   reward_address Addr
   jail_record JailRecord
   frozen map<Epoch, bool>
-  redelegations map<Addr, map<Addr, IncomingRedelegation>>
+  incoming_redelegations map<Addr, map<Addr, int>>
+  outgoing_redelegations map<Addr, map<Addr, map<Epoch, int>>>
 }
 
 type Bond struct {
@@ -61,11 +62,6 @@ type Slash struct {
 
 type Redelegation struct {
   validator Addr
-  amount uint
-}
-
-type IncomingRedelegation struct {
-  epoch Epoch
   amount uint
 }
 
@@ -219,16 +215,6 @@ tx_undelegate(validator_address, delegator_address, amount)
 ```
 
 ```go
-func is_chained_redelegation(validator_address, delegator_address)
-  // avoid iteration over validators and do it over incoming_redelegations
-  forall (val in validators) do
-    var redelegation = validators[validator_address].redelegations[val][delegator_address]
-    if (redelegation.epoch >= 0 && redelegation.epoch + unbonding_length > cur_epoch) then
-      return true
-  return false
-```
-
-```go
 tx_redelegate(src_validator_address, dest_validator_address, delegator_address)
 {
   // Disallow re-delegation if the source validator is frozen (similar to unbonding)
@@ -236,7 +222,8 @@ tx_redelegate(src_validator_address, dest_validator_address, delegator_address)
   if (is_validator(src_validator_address, cur_epoch+pipeline_length) && src_frozen == false) then
     // Check that `incoming_redelegations[delegator_address]` for `src_validator_address` either don't exist
     // or if they do, they cannot be slashed anymore (`end + unbonding_length <= cur_epoch`)
-    if is_chained_redelegation(src_validator_address, delegator_address) then
+    var last_epoch_redelegation = validators[validator_address].incoming_redelegations[delegator_address]
+    if (last_epoch_redelegation >= 0 && last_epoch_redelegation + unbonding_length > cur_epoch) then
       return
     // Find the sum of bonded tokens to `src_validator_address`
     var delbonds = {<start, amount> | amount = bonds[delegator_address][src_validator_address].deltas[start] > 0 && start <= cur_epoch + unbonding_length}
@@ -250,9 +237,10 @@ tx_redelegate(src_validator_address, dest_validator_address, delegator_address)
     bonds[delegator_address][dest_validator_address].deltas[cur_epoch+pipeline_length] += amount_after_slashing
     redelegated_bonds[delegator_address][dest_validator_address][cur_epoch+pipeline_length] = Redelegation{validator: src_validator_address,
                                                                                                            amount: amount_after_slashing}
-    //save the epoch at which the redelegation occurs to track chained redelegations
-    validators[dest_validator_address].redelegations[src_validator_address][delegator_address] = IncomingRedelegation{epoch: cur_epoch,
-                                                                                                                      amount: amount_after_slashing}
+    // update total redelegated between the pair of validators
+    validators[src_validator_address].outgoing_redelegations[dest_validator_address][cur_epoch] += amount_after_slashing
+    // save the epoch at which the redelegation occurs to track chained redelegations
+    validators[dest_validator_address].incoming_redelegations[delegator_address] = cur_epoch
     update_total_deltas(dest_validator_address, pipeline_length, amount_after_slashing)
     update_voting_power(dest_validator_address, pipeline_length)
     update_total_voting_power(pipeline_length)
@@ -636,13 +624,10 @@ end_of_epoch()
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
       slash_misbehaving_validator(validator_address, slash, total_staked)
 
-      forall (val in validators) do
-        var pairs = { pair = <delegator, <epoch, redelegation> | pair in validators[val].redelegations[validator_address] &&
-                                                                 pair !=⊥ && 
-                                                                 redelegation.epoch - unbonding_length <= slash.epoch < redelegation.epoch + pipeline_length}
-        forall (<delegator, redelegation> in pairs) do
-          var staked_redelegated = 
-          slash_redelegated_validator(val, validator_address, slash, redelegation.amount)
+      forall (dest_validators in validators[validator_address].outgoing_redelegations.keys()) do
+        forall (amount in {amount | amount = validators[validator_address].outgoing_redelegations[dest_validators][start] > 0 &&
+                                             start - unbonding_length <= slash.epoch < start + pipeline_length}) do
+          slash_redelegated_validator(dest_validators, validator_address, slash, amount)
 
     //unfreeze the validator (Step 2.5 of cubic slashing)
     //this step is done in advance when the evidence is found
