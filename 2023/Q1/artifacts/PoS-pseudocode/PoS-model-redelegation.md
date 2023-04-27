@@ -219,10 +219,10 @@ tx_undelegate(validator_address, delegator_address, amount)
 ```
 
 ```go
-func is_chained_redelegation(dest_validator_address, delegator_address)
+func is_chained_redelegation(validator_address, delegator_address)
   // avoid iteration over validators and do it over incoming_redelegations
   forall (val in validators) do
-    var redelegation = validators[dest_validator_address].redelegations[val][delegator_address]
+    var redelegation = validators[validator_address].redelegations[val][delegator_address]
     if (redelegation.epoch >= 0 && redelegation.epoch + unbonding_length > cur_epoch) then
       return true
   return false
@@ -234,7 +234,7 @@ tx_redelegate(src_validator_address, dest_validator_address, delegator_address)
   // Disallow re-delegation if the source validator is frozen (similar to unbonding)
   var src_frozen = read_epoched_field(validators[src_validator_address].frozen, cur_epoch, false)
   if (is_validator(src_validator_address, cur_epoch+pipeline_length) && src_frozen == false) then
-    // Check that `incoming_redelegations[delegator_address]` for `dest_validator_address` either don't exist
+    // Check that `incoming_redelegations[delegator_address]` for `src_validator_address` either don't exist
     // or if they do, they cannot be slashed anymore (`end + unbonding_length <= cur_epoch`)
     if is_chained_redelegation(src_validator_address, delegator_address) then
       return
