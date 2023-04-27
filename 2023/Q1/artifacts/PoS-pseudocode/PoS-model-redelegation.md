@@ -737,7 +737,7 @@ func slash_redelegated_validator(validator_address, src_validator, slash, staked
                              unbond.start - unbonding_length - pipeline_length <= s.epoch &&
                              s.epoch + unbonding_length < slash.epoch }
 
-      total_unbonded = compute_amount_after_slashing(set_slashes, unbond.amount)
+      total_unbonded += compute_amount_after_slashing(set_slashes, unbond.amount)
 
   var last_slash = 0
   // up to pipeline_length because there cannot be any unbond in a greater ß (cur_epoch+pipeline_length is the upper bound)
