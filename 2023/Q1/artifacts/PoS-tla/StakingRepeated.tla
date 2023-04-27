@@ -112,7 +112,7 @@ INIT_VALIDATOR_STAKE == 2
 SLASH_RATE == 1
 
 \* the set of transaction types
-TRANSACTIONS == {"delegate", "unbond", "withdraw"}
+TRANSACTIONS == {"selfDelegate", "delegate", "selfUnbond", "unbond", "selfWithdraw", "withdraw", "evidence"}
 
 (*
 * Computes the Max of two numbers.
@@ -163,7 +163,7 @@ Init ==
 \* delegate `amount` tokens to a validator
 Delegate(sender, amount) ==
     /\ amount <= balanceOf[sender]
-    /\ lastTx' = [ tag |-> "delegate",
+    /\ lastTx' = [ tag |-> IF sender = Validator THEN "selfDelegate" ELSE "delegate",
                    sender |-> sender,
                    value |-> amount ]
     \* update the balance of 'sender'
@@ -205,7 +205,7 @@ FilterBond(bond, remain, e) == IF bond.start = e THEN [ bond EXCEPT !.amount = @
 \* Unbond `amount` tokens from a validator
 Unbond(sender, amount) ==
     /\ amount <= totalDelegated[sender] /\ isFrozen[0] /= TRUE
-    /\ lastTx' = [ tag |-> "unbond",
+    /\ lastTx' = [ tag |-> IF sender = Validator THEN "selfUnbond" ELSE "unbond",
                    sender |-> sender,
                    value |-> amount ]
     /\ LET recordComputeUnbonds == ComputedUnbonds(amount, sender) IN
@@ -246,7 +246,8 @@ ComputeAmountAfterSlashing(setUnbonds) == LET
 Withdraw(sender) ==
     LET setUnbonds == { unbond \in unbonded[sender]: unbond.end <= epoch } IN
     LET amountAfterSlashing == ComputeAmountAfterSlashing(setUnbonds) IN
-    /\ lastTx' = [ tag |-> "withdraw",
+    /\ amountAfterSlashing > 0
+    /\ lastTx' = [ tag |-> IF sender = Validator THEN "selfWithdraw" ELSE "withdraw",
                    sender |-> sender,
                    value |-> amountAfterSlashing ]
     \* transaction always succeeds
@@ -343,9 +344,9 @@ Next ==
     ELSE
       \E sender \in UserAddrs:
       \E amount \in Int:
-        /\ amount >= 0 /\ amount <= MAX_UINT
+        /\ amount > 0 /\ amount <= MAX_UINT
         \* e is picked such that it is not in the future or too far in the past.
-        /\ \/ \E e \in Int: e <= epoch /\ e >= epoch - UnbondingLength /\ Evidence(e)
+        /\ \/ \E e \in Int: e <= epoch /\ e >= epoch - UnbondingLength /\ Evidence(e) /\ e = epoch \* only current epoch
            \/ Delegate(sender, amount)
            \/ Unbond(sender, amount)
            \/ Withdraw(sender)
