@@ -236,7 +236,7 @@ tx_redelegate(src_validator_address, dest_validator_address, delegator_address)
   if (is_validator(src_validator_address, cur_epoch+pipeline_length) && src_frozen == false) then
     // Check that `incoming_redelegations[delegator_address]` for `dest_validator_address` either don't exist
     // or if they do, they cannot be slashed anymore (`end + unbonding_length <= cur_epoch`)
-    if is_chained_redelegation(dest_validator_address, delegator_address) then
+    if is_chained_redelegation(src_validator_address, delegator_address) then
       return
     // Find the sum of bonded tokens to `src_validator_address`
     var delbonds = {<start, amount> | amount = bonds[delegator_address][src_validator_address].deltas[start] > 0 && start <= cur_epoch + unbonding_length}
