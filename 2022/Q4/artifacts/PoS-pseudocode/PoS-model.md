@@ -501,6 +501,15 @@ func compute_stake_fraction(infraction, voting_power){
 ```
 
 ```go
+func get_min_slash_rate(infraction){
+  switch infraction
+    case duplicate_vote: return duplicate_vote_rate
+    case light_client_attack: return light_client_attack
+    default: panic()
+}
+```
+
+```go
 // Processes the enqueued slashes by calculating the cubic slashing rate and then slashing the validator's deltas (stake)
 end_of_epoch()
 {
@@ -512,8 +521,8 @@ end_of_epoch()
   var set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
   forall (validator_address in set_validators) do
     forall (slash in {s | s in enqueued_slashes[cur_epoch] && s.validator == validator_address}) do
-      slash.rate = rate
       // Set the slash on the now "finalized" slash amount in storage (Step 2.3 of cubic slashing)
+      slash.rate = max{get_min_slash_rate(slash), rate}
       append(slashes[validator_address], slash)
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
       
