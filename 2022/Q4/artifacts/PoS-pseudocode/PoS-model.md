@@ -267,8 +267,8 @@ func unbond(validator_address, delegator_address, total_amount)
   // Disallow unbonding if validator is frozen, ensure that the address is a validator at pipeline epoch
   var frozen = read_epoched_field(validators[validator_address].frozen, cur_epoch, false)
   if (is_validator(validator_address, cur_epoch+pipeline_length) && frozen == false) then
-    var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[start] > 0 && start <= cur_epoch + unbonding_length}
     // Compute sum of bonds from delegator to validator at the pipeline epoch (where an unbond will affect the deltas) and ensure that it is enough to accomodate the `total_amount` requested for unbonding
+    var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[start] > 0 && start <= cur_epoch + pipeline_len}
     if (sum{amount | <start, amount> in delbonds} >= total_amount) then
       var remain = total_amount
       var amount_after_slashing = 0
