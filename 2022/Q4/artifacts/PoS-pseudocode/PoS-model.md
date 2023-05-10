@@ -478,7 +478,6 @@ freeze_validator(validator_address)
   var epochs = {epoch | cur_epoch <= epoch <= cur_epoch+unbonding_length &&
                         (epoch > cur_epoch => validators[validator_address].frozen[epoch] != ⊥)}
   forall (epoch in epochs) do
-    var total = read_epoched_field(validators[validator_address].frozen, epoch, false)
     validators[validator_address].frozen[epoch] = true
   //schedule when to unfreeze the validator: after processing the enqueued slash
   validators[validator_address].frozen[cur_epoch+unbonding_length+1] = false
