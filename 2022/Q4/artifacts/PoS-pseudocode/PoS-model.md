@@ -240,11 +240,11 @@ func bond(validator_address, delegator_address, amount)
     // Debit amount from delegator account and credit it to the PoS account
     balances[delegator_address] -= amount
     balances[pos] += amount
-    update_total_deltas(validator_address, pipeline_lenght, amount)
-    update_voting_power(validator_address, pipeline_lenght)
-    update_total_voting_power(pipeline_lenght)
-    update_validator_sets(validator_address, pipeline_lenght)
     // Update voting powers and validator set
+    update_total_deltas(validator_address, pipeline_length, amount)
+    update_voting_power(validator_address, pipeline_length)
+    update_total_voting_power(pipeline_length)
+    update_validator_sets(validator_address, pipeline_length)
 }
 ```
 
