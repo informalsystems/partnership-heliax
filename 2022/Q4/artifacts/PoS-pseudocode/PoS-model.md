@@ -502,11 +502,11 @@ func compute_stake_fraction(infraction, voting_power){
 // Processes the enqueued slashes by calculating the cubic slashing rate and then slashing the validator's deltas (stake)
 end_of_epoch()
 {
-  //iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
+  // Iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
   var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1}
-  //calculate the slash rate (Step 2.2 of cubic slashing)
+  // Calculate the cubic slash rate for all slashes processed this epoch (Step 2.2 of cubic slashing)
   var rate = compute_final_rate(set_slashes)
-
+  // Iterate over validators with enqueued slashes this epoch
   var set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
   forall (validator_address in set_validators) do
     forall (slash in {s | s in enqueued_slashes[cur_epoch] && s.validator == validator_address}) do
