@@ -98,12 +98,11 @@ total_voting_power[] in Epoch to VotingPower //map from epoch to voting_power
 ## Validator transactions
 
 ```go
-tx_become_validator(validator_address, consensus_key, staking_reward_address)
+tx_become_validator(validator_address, consensus_key)
 {
   // Check that become_validator has not been called before for validator_address
   var state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length, ⊥)
-  if (state == ⊥ && validator_address != staking_reward_address) then
-    validators[validator_address].reward_address = staking_reward_address
+  if (state == ⊥) then
     // Set status to candidate and consensus key at n + pipeline_length
     validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
