@@ -271,7 +271,8 @@ func unbond(validator_address, delegator_address, total_amount)
     var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[start] > 0 && start <= cur_epoch + pipeline_len}
     if (sum{amount | <start, amount> in delbonds} >= total_amount) then
       var remain = total_amount
-      var amount_after_slashing = 0
+      var amount_after_slashing = 0 // Track the amount to change the deltas (may be less than `total_amount` due to previous slash processing)
+
       // Iterate over bonds and create unbond
       forall (<start, amount> in delbonds while remain > 0) do
         // Get the minimum of the remainder and the unbond, equal to amount if remain > amount and remain otherwise 
