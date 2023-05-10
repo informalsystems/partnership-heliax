@@ -231,6 +231,7 @@ tx_withdraw_unbonds_delegator(delegator_address)
 //A priori, the only possible values for offset_length are pipeline_length and unbonding_length.
 //This would mean that epoched variables may be update at different offsets which would require special handling.
 */
+// Bond tokens to a validator address. This can be done even if a validator is frozen or jailed.
 func bond(validator_address, delegator_address, amount)
 {
   if is_validator(validator_address, cur_epoch+pipeline_length) then
@@ -261,6 +262,7 @@ func bond(validator_address, delegator_address, amount)
     conclusion: it is an actual issue, unresolved
 */
 // This function is called by transactions tx_unbond, tx_undelegate and tx_redelegate.
+// Unbonds tokens from one or more existing bonds. The validator deltas are updated and include the effects of slashing. The amount deducted from the stake may be less than the `total_amount` unbonded because an already-processed slash may have effectively slashed the validator's stake already due to the bond that is currently being unbonded. Unbonding is forbidden while the target validator is frozen, but is allowed while the validator is jailed and not frozen.
 func unbond(validator_address, delegator_address, total_amount)
 {
   // Disallow unbonding if validator is frozen, ensure that the address is a validator at pipeline epoch
