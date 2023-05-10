@@ -31,7 +31,7 @@ type Validator struct {
   consensus_key map<Epoch, Key>
   state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
-  set_unbonds map<Epoch, Set<UnbondRecord>>
+  set_unbonds map<Epoch, map<Epoch, amount:int>> // outer epoch for the unbond start, inner for the underlying bond start
   voting_power map<Epoch, VotingPower>
   reward_address Addr
   jail_record JailRecord
@@ -292,7 +292,8 @@ func unbond(validator_address, delegator_address, total_amount)
         //- The problem is that we keep unbond records in a set and when we try to add the second record, since it is a duplicate, it will be discarded.
         //It is an easy fix I'd say: use a bag instead of a set to allow duplicates, or check if the set includes the record and act upon
         //(remove it, create a new one with double the amount, and add it).
-        validators[validator_address].set_unbonds[cur_epoch+pipeline_length] = {UnbondRecord{amount: amount_unbonded, start: start}} \union validators[validator_address].set_unbonds[cur_epoch+pipeline_length]
+
+        validators[validator_address].set_unbonds[cur_epoch+pipeline_length][start] += amount_unbonded
         remain -= amount_unbonded
       
       // Ensure that the validator's stake does not go negative due to the slashing
@@ -512,6 +513,7 @@ func get_min_slash_rate(infraction){
 // Processes the enqueued slashes by calculating the cubic slashing rate and then slashing the validator's deltas (stake)
 end_of_epoch()
 {
+// The infraction epoch is the same for all enqueued slashes (`slash.epoch` in below code)
   var infraction_epoch = cur_epoch - unbonding_length
   // Iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
   var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1}
@@ -520,37 +522,50 @@ end_of_epoch()
   // Iterate over validators with enqueued slashes this epoch
   var set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
   forall (validator_address in set_validators) do
+    var total_staked = read_epoched_field(validators[validator_address].total_deltas, infraction_epoch, 0)
+    var total_rate = 0
+
+    // Iterate over validator's slashes, setting and summing the rates to get the total slash rate
     forall (slash in {s | s in enqueued_slashes[cur_epoch] && s.validator == validator_address}) do
       // Set the slash on the now "finalized" slash amount in storage (Step 2.3 of cubic slashing)
       slash.rate = min{1.0, max{get_min_slash_rate(slash.slash_type), cubic_rate}}
+      total_rate += slash.rate
       append(slashes[validator_address], slash)
-      var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
-      
-      var total_unbonded = 0
-      //find the total unbonded from the slash epoch up to the current epoch first
-      //a..b notation determines an integer range: all integers between a and b inclusive
-      forall (epoch in slash.epoch+1..cur_epoch) do
-        forall (unbond in validators[validator_address].set_unbonds[epoch] s.t. unbond.start <= slash.epoch)
-          var set_prev_slashes = {s | s in slashes[validator_address] && unbond.start <= s.epoch && s.epoch + unbonding_length < slash.epoch}
-          total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond.amount)
 
-      var last_slash = 0
-      // up to pipeline_length because there cannot be any unbond in a greater ß (cur_epoch+pipeline_length is the upper bound)
-      forall (offset in 1..pipeline_length) do
-        forall (unbond in validators[validator_address].set_unbonds[cur_epoch + offset] s.t. unbond.start <= slash.epoch) do
-          // We only need to apply a slash s if s.epoch < unbond.end - unbonding_length
-          // It is easy to see that s.epoch + unbonding_length < slash.epoch implies s.epoch < unbond.end - unbonding_length
-          // 1) slash.epoch = cur_epoch - unbonding_length
-          // 2) unbond.end = cur_epoch + offset + unbonding_length => cur_epoch = unbond.end - offset - unbonding_length
-          // By 1) s.epoch + unbonding_length < cur_epoch - unbonding_length
-          // By 2) s.epoch + unbonding_length < unbond.end - offset - 2*unbonding_length => s.epoch < unbond.end - offset - 3*unbonding_length, as required.
-          var set_prev_slashes = {s | s in slashes[validator_address] && unbond.start <= s.epoch && s.epoch + unbonding_length < slash.epoch}
-          total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond.amount)
-        var this_slash = (total_staked - total_unbonded) * slash.rate
-        var diff_slashed_amount = last_slash - this_slash
-        last_slash = this_slash
-        update_total_deltas(validator_address, offset, diff_slashed_amount)
-        update_voting_power(validator_address, offset)
+    // Effective total slash rate is the sum of rates of all validator's slashes, capped at 1.0
+    total_rate = min{1.0, total_rate}
+      
+    // Find the total amount deducted from the deltas due to unbonds that became active after the infraction epoch. This is used to ensure the deltas are appropriately slashed.
+    // Note: need to only do this once
+    var total_unbonded = 0
+    // Find the total unbonded from the slash epoch up to the current epoch first
+    //a..b notation determines an integer range: all integers between a and b inclusive
+    forall (epoch in slash.epoch+1..cur_epoch) do
+      forall ((unbond_start, unbond_amount) in validators[validator_address].set_unbonds[epoch] s.t. unbond_start <= infraction_epoch)
+        var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length < infraction_epoch}
+        total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
+
+    // For the future epochs, do the same as before but also update the deltas
+    var total_slashed = 0
+    var last_slash = 0
+    // up to pipeline_length because there cannot be any unbond in a greater epoch (cur_epoch+pipeline_length is the upper bound)
+    forall (offset in 1..pipeline_length) do
+      forall ((unbond_start, unbond_amount) in validators[validator_address].set_unbonds[cur_epoch + offset] s.t. unbond_start <= infraction_epoch) do
+        // We only need to apply a slash s if s.epoch < unbond.end - unbonding_length
+        // It is easy to see that s.epoch + unbonding_length < slash.epoch implies s.epoch < unbond.end - unbonding_length
+        // 1) slash.epoch = cur_epoch - unbonding_length
+        // 2) unbond.end = cur_epoch + offset + unbonding_length => cur_epoch = unbond.end - offset - unbonding_length
+        // By 1) s.epoch + unbonding_length < cur_epoch - unbonding_length
+        // By 2) s.epoch + unbonding_length < unbond.end - offset - 2*unbonding_length => s.epoch < unbond.end - offset - 3*unbonding_length, as required.
+        var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length < infraction_epoch}
+        total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
+      var this_slash = (total_staked - total_unbonded) * total_rate
+      var diff_slashed_amount = last_slash - this_slash
+      last_slash = this_slash
+      update_total_deltas(validator_address, offset, diff_slashed_amount)
+      update_voting_power(validator_address, offset)
+      total_slashed -= diff_slashed_amount
+
     //unfreeze the validator (Step 2.5 of cubic slashing)
     //this step is done in advance when the evidence is found
     //by setting validators[validator_address].frozen[cur_epoch+unbonding_length+1]=false
