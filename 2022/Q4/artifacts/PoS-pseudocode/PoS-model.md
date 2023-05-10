@@ -100,16 +100,16 @@ total_voting_power[] in Epoch to VotingPower //map from epoch to voting_power
 ```go
 tx_become_validator(validator_address, consensus_key, staking_reward_address)
 {
-  //check that become_validator has not been called before for validator_address
+  // Check that become_validator has not been called before for validator_address
   var state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length, ⊥)
   if (state == ⊥ && validator_address != staking_reward_address) then
     validators[validator_address].reward_address = staking_reward_address
-    //set status to candidate and consensus key at n + pipeline_length
+    // Set status to candidate and consensus key at n + pipeline_length
     validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
     validators[validator_address].jail_record = JailRecord{is_jailed: false, epoch: ⊥}
     validators[validator_address].frozen[cur_epoch] = false
-    //add validator to the inactive set
+    // Add validator to the inactive set
     add_validator_to_sets(validator_address, pipeline_length)
 
 }
@@ -148,7 +148,7 @@ tx_reactivate(validator_address)
 ```go
 tx_unjail(validator_address)
 {
-  //check validator is jailed and can be unjailed
+  // Check validator is jailed and can be unjailed
   var epochs_jailed = cur_epoch + pipeline_length - validators[validator_address].jail_record.epoch
   if (is_jailed(validator_address) && (epochs_jailed > min_sentence)) then
     validators[validator_address].jail_record = JailRecord{is_jailed: false, epoch: ⊥}
@@ -235,15 +235,16 @@ tx_withdraw_unbonds_delegator(delegator_address)
 func bond(validator_address, delegator_address, amount)
 {
   if is_validator(validator_address, cur_epoch+pipeline_length) then
-    //add amount bond to delta at n+pipeline_length
+    // Add bond amount to deltas at n + pipeline_length
     bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length] += amount
-    //debit amount from delegator account and credit it to the PoS account
+    // Debit amount from delegator account and credit it to the PoS account
     balances[delegator_address] -= amount
     balances[pos] += amount
     update_total_deltas(validator_address, pipeline_lenght, amount)
     update_voting_power(validator_address, pipeline_lenght)
     update_total_voting_power(pipeline_lenght)
     update_validator_sets(validator_address, pipeline_lenght)
+    // Update voting powers and validator set
 }
 ```
 
@@ -260,26 +261,24 @@ func bond(validator_address, delegator_address, amount)
     there is a problem with unbonding, slashing and total_deltas becoming negative
     conclusion: it is an actual issue, unresolved
 */
-//This function is called by transactions tx_unbond, tx_undelegate and tx_redelegate
+// This function is called by transactions tx_unbond, tx_undelegate and tx_redelegate.
 func unbond(validator_address, delegator_address, total_amount)
 {
-  //disallow unbonding if the validator is frozen
+  // Disallow unbonding if validator is frozen, ensure that the address is a validator at pipeline epoch
   var frozen = read_epoched_field(validators[validator_address].frozen, cur_epoch, false)
   if (is_validator(validator_address, cur_epoch+pipeline_length) && frozen == false) then
-    //compute total bonds from delegator to validator
     var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[start] > 0 && start <= cur_epoch + unbonding_length}
-    //check if there are enough bonds
-    //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
+    // Compute sum of bonds from delegator to validator at the pipeline epoch (where an unbond will affect the deltas) and ensure that it is enough to accomodate the `total_amount` requested for unbonding
     if (sum{amount | <start, amount> in delbonds} >= total_amount) then
       var remain = total_amount
       var amount_after_slashing = 0
-      //Iterate over bonds and create unbond
+      // Iterate over bonds and create unbond
       forall (<start, amount> in delbonds while remain > 0) do
-        //Take the minimum between the remainder and the unbond. This is equal to amount if remain > amount and remain otherwise 
+        // Get the minimum of the remainder and the unbond, equal to amount if remain > amount and remain otherwise 
         var amount_unbonded = min{amount, remain}
         bonds[delegator_address][validator_address].deltas[start] = amount - amount_unbonded
         unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] = amount_unbonded
-        // set of slashes that happened while the bond was contributing to the validator's stake
+        // Set of slashes that happened while the bond was contributing to the validator's stake
         var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch }
         amount_after_slashing += compute_amount_after_slashing(set_slashes, amount_unbonded)
         //The current model disregards a corner case that should be taken care of in the implementation:
@@ -501,6 +500,7 @@ func compute_stake_fraction(infraction, voting_power){
 ```
 
 ```go
+// Processes the enqueued slashes by calculating the cubic slashing rate and then slashing the validator's deltas (stake)
 end_of_epoch()
 {
   //iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
@@ -511,8 +511,8 @@ end_of_epoch()
   var set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
   forall (validator_address in set_validators) do
     forall (slash in {s | s in enqueued_slashes[cur_epoch] && s.validator == validator_address}) do
-      //set the slash on the now "finalized" slash amount in storage (Step 2.3 of cubic slashing)
       slash.rate = rate
+      // Set the slash on the now "finalized" slash amount in storage (Step 2.3 of cubic slashing)
       append(slashes[validator_address], slash)
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
       
