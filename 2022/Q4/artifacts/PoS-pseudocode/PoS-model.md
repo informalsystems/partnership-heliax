@@ -278,7 +278,7 @@ func unbond(validator_address, delegator_address, total_amount)
         // Get the minimum of the remainder and the unbond, equal to amount if remain > amount and remain otherwise 
         var amount_unbonded = min{amount, remain}
         bonds[delegator_address][validator_address].deltas[start] = amount - amount_unbonded
-        unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] = amount_unbonded
+        unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] += amount_unbonded
         // Set of slashes that happened while the bond was contributing to the validator's stake
         var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch }
         amount_after_slashing += compute_amount_after_slashing(set_slashes, amount_unbonded)
