@@ -564,9 +564,15 @@ end_of_epoch()
       var this_slash = (total_staked - total_unbonded) * total_rate
       var diff_slashed_amount = last_slash - this_slash
       last_slash = this_slash
-      update_total_deltas(validator_address, offset, diff_slashed_amount)
+
+      // Do not over-slash or improperly slash stake that did not exist at the infraction epoch
+      var sum_post_bonds = sum{bonds[validator_address].deltas[start] s.t. start > infraction_epoch && start <= cur_epoch + offset>}
+      var validator_stake = read_epoched_field(validators[validator_address].total_deltas, cur_epoch + offset, 0)
+      var slashable_stake = validator_stake - sum_post_bonds
+      var change = min{-slashable_stake, diff_slashed_amount}
+      update_total_deltas(validator_address, offset, change)
       update_voting_power(validator_address, offset)
-      total_slashed -= diff_slashed_amount
+      total_slashed -= change
 
     //unfreeze the validator (Step 2.5 of cubic slashing)
     //this step is done in advance when the evidence is found
