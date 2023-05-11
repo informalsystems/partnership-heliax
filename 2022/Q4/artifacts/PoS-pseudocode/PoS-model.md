@@ -314,7 +314,8 @@ func withdraw(validator_address, delegator_address)
     var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch && slash.epoch < end - unbonding_length - cubic_slash_window_width}
     var amount_after_slashing = compute_amount_after_slashing(set_slashes, amount)
     balance[delegator_address] += amount_after_slashing
-    balance[pos] -= amount_after_slashing
+    balance[slash_pool] += amount - amount_after_slashing
+    balance[pos] -= amount
     // Remove the unbond
     unbonds[delegator_address][validator_address].deltas[(start,end)] = 0
 }
@@ -574,6 +575,10 @@ end_of_epoch()
       update_voting_power(validator_address, offset)
       total_slashed -= change
 
+    // Transfer the tokens deducted during this slash processing to the slash pool
+    balance[slash_pool] += total_slashed
+    balance[pos] -= total_slashed
+    
     //unfreeze the validator (Step 2.5 of cubic slashing)
     //this step is done in advance when the evidence is found
     //by setting validators[validator_address].frozen[cur_epoch+unbonding_length+1]=false
