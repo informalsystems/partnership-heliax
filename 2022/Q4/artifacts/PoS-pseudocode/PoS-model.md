@@ -74,6 +74,7 @@ type ValidatorSet struct {
 ```go
 pipeline_length uint
 unbonding_length uint
+cubic_slash_window_width uint
 min_sentence uint
 votes_per_token uint
 duplicate_vote_rate float
@@ -274,13 +275,14 @@ func unbond(validator_address, delegator_address, total_amount)
     if (sum{amount | <start, amount> in delbonds} >= total_amount) then
       var remain = total_amount // Track the remaining bond amount to unbond
       var amount_after_slashing = 0 // Track the amount to change the deltas (may be less than `total_amount` due to previous slash processing)
+      var withdraw_epoch = cur_epoch + pipeline_length + unbonding_length + cubic_slash_window_width
 
       // Iterate over bonds and create unbond
       forall (<start, amount> in delbonds while remain > 0) do
         // Get the minimum of the remainder and the unbond, equal to amount if remain > amount and remain otherwise 
         var amount_unbonded = min{amount, remain}
         bonds[delegator_address][validator_address].deltas[start] = amount - amount_unbonded
-        unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] += amount_unbonded
+        unbonds[delegator_address][validator_address].deltas[start, withdraw_epoch] += amount_unbonded
         // Set of slashes that happened while the bond was contributing to the validator's stake
         var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch }
         amount_after_slashing += compute_amount_after_slashing(set_slashes, amount_unbonded)
@@ -308,8 +310,8 @@ func withdraw(validator_address, delegator_address)
 {
   var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
   forall (<start,end,amount> in selfunbonds) do
-    var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch && slash.epoch < end - unbonding_length }
     // Apply slashes that happened while the bond associated with the unbond was contributing to the validator's stake
+    var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch && slash.epoch < end - unbonding_length - cubic_slash_window_width}
     var amount_after_slashing = compute_amount_after_slashing(set_slashes, amount)
     balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
@@ -350,8 +352,8 @@ func new_evidence(validator, infraction_epoch, type)
   // Create slash
   var total_staked = read_epoched_field(validators[evidence.validator].total_deltas, infraction_epoch, 0)
   var slash = Slash{epoch: infraction_epoch, validator: validator, rate: 0, type: type, voting_power: total_staked}
-  append(enqueued_slashes[infraction_epoch + unbonding_length], slash)
   // Enqueue slash (Step 1.1 of cubic slashing)
+  append(enqueued_slashes[infraction_epoch + unbonding_length + cubic_slash_window_width], slash)
   // Jail validator (Step 1.2 of cubic slashing)
   validators[validator].jail_record = JailRecord{is_jailed: true, epoch: cur_epoch+1}
   remove_validator_from_sets(validator, 1)
@@ -508,7 +510,7 @@ func get_min_slash_rate(infraction){
 end_of_epoch()
 {
 // The infraction epoch is the same for all enqueued slashes (`slash.epoch` in below code)
-  var infraction_epoch = cur_epoch - unbonding_length
+  var infraction_epoch = cur_epoch - unbonding_length - cubic_slash_window_width
   // Iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
   var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1}
   // Calculate the cubic slash rate for all slashes processed this epoch (Step 2.2 of cubic slashing)
