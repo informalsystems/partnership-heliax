@@ -178,7 +178,7 @@ module namada {
     * 4. It increases the validator's stake.
     */
     pure def delegate(delegatorState: DelegatorState, validatorState: ValidatorState, posState: PosState, amount: int): ResultTx = {
-      if (amount <= delegatorState.balance) {
+      if (amount <= delegatorState.balance and amount > 0) {
         val updatedDelegatorState = delegatorState.with("balance", delegatorState.balance - amount)
                                                   .with("bonded", delegatorState.bonded.set(validatorState.address,
                                                                                             addRecord(delegatorState.bonded.get(validatorState.address),
@@ -212,7 +212,7 @@ module namada {
                                                   .with("unbonded", delegatorState.unbonded.set(validatorState.address, delegatorState.unbonded.get(validatorState.address).union(newUnbonds)))                                  
         val amountAfterSlashing = newUnbonds.fold(0, (sum, element) => val listSlashes = validatorState.slashes.select(slash => element.start <= slash.epoch)
                                                                        sum + applyListSlashes(listSlashes, element.amount))
-        val updatedTotalUnbonded = newUnbonds.fold(validatorState.totalUnbonded.get(posState.epoch),
+        val updatedTotalUnbonded = newUnbonds.fold(validatorState.totalUnbonded.get(posState.epoch + PIPELINE_OFFSET),
                                                    (acc, element) => acc.safeSet(element.start, acc.getOrElse(element.start, 0) + element.amount))
         val updatedValidatorState = validatorState.with("stake", validatorState.stake.set(posState.epoch + PIPELINE_OFFSET,
                                                                                           validatorState.stake.get(posState.epoch + PIPELINE_OFFSET) - amountAfterSlashing))
@@ -257,7 +257,7 @@ module namada {
     }
 
     pure def slashValidator(initMap: Epoch -> int, curEpoch: Epoch, stake: int, slash: Slash, prevSlashes: List[Slash], totalUnbonded: Epoch -> Epoch -> int, finalRate: int): Epoch -> int = {
-      val initTotalUnbonded = slash.epoch.to(curEpoch).fold(0, (sum, e) => sum + computeTotalUnbonded(slash, prevSlashes, totalUnbonded.get(e)))
+      val initTotalUnbonded = (slash.epoch+1).to(curEpoch).fold(0, (sum, e) => sum + computeTotalUnbonded(slash, prevSlashes, totalUnbonded.get(e)))
       val result = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).fold((initTotalUnbonded, initMap), (acc, e) => val updatedTotalUnbonded = acc._1 + computeTotalUnbonded(slash, prevSlashes, totalUnbonded.get(e))
                                                                                                             val slashedAmount = (stake - updatedTotalUnbonded) * finalRate
                                                                                                             (updatedTotalUnbonded, acc._2.set(e, acc._2.get(e) + slashedAmount)))
@@ -297,9 +297,9 @@ module namada {
 
     pure def proccessEvidence(e: Epoch, validatorState: ValidatorState, posState: PosState): {validatorState: ValidatorState, posState: PosState} = {
       val nextSlashCounter = posState.counterSlashes + 1
-      val slash = {id: posState.counterSlashes + 1, epoch: e, validator: validatorState.address, rate: 1}
+      val slash = {id: nextSlashCounter, epoch: e, validator: validatorState.address, rate: 1}
       {validatorState: validatorState.with("frozen", max(validatorState.frozen, e + UNBONDING_OFFSET)),
-       posState: posState.with("counterSlashes", posState.counterSlashes + 1)
+       posState: posState.with("counterSlashes", nextSlashCounter)
                          .with("enqueuedSlashes", posState.enqueuedSlashes.set(e + UNBONDING_OFFSET, posState.enqueuedSlashes.get(e + UNBONDING_OFFSET).union(Set(slash))))}
     }
 
@@ -360,7 +360,8 @@ module namada {
     }
 
     action actionEvidence(e: Epoch, validator: Address): bool = all {
-      if (limitEvidence) require(validators.get(validator).frozen < e) else true,
+      //if (limitEvidence) require(validators.get(validator).frozen < e) else true,
+      require(limitEvidence implies validators.get(validator).frozen < e),
       val result = proccessEvidence(e, validators.get(validator), pos)
       all {
         validators' = validators.set(validator, result.validatorState),
@@ -374,33 +375,45 @@ module namada {
     * Invariants
     * ************************************************************************* */
 
-    // Invariant 1: The total amount of tokens is constant.
-    val totalAmountTokensConstant = USERS.fold(0, (sum, user) => sum + delegators.get(user).balance) + pos.posAccount + pos.slashPool== size(USERS)*INIT_BALANCE
-
-    // Invariant 2: A delegator's balance cannot become negative.
+    // Invariant 1: A delegator's balance cannot become negative.
     val balanceGreaterZero = USERS.forall(user => delegators.get(user).balance >= 0)
 
-    // Invariant 3: A validator's stake cannot become negative.
+    // Invariant 2: The PoS account cannot become negative.
+    val posAccountGreaterZero = pos.posAccount >= 0
+
+    // Invariant 3: If there are no bonds and all unbonds have been withdrawn, the PoS balance must be equal to zero.
+    val posAccountZero = USERS.forall(user => VALIDATORS.forall(validator => delegators.get(user).bonded.get(validator) == Set() and
+                                                                             delegators.get(user).unbonded.get(validator) == Set())) implies pos.posAccount == 0
+
+    // Invariant 4: The validator's voting power at a given epoch is less or equal to the total amount of tokens delegated to that validator.
+    // This is not an equality due to slashing. Next invariant checks the equality restricted to no slashing.
+    val stakeEqualOrLessSumBonds = VALIDATORS.forall(validator => USERS.fold(0, (sum, user) => 
+                                                                           sum + delegators.get(user).bonded.get(validator).fold(0, (total, elem) =>
+                                                                                                                                     total + elem.amount) ) >= validators.get(validator).stake.get(pos.epoch + PIPELINE_OFFSET))
+
+    // Invariant 5: If no slashing occurs, the validator's voting power at a given epoch is equal to the total amount of tokens delegated to that validator.
+    val noSlashingStakeEqualSumBonds = pos.slashPool == 0 implies VALIDATORS.forall(validator => USERS.fold(0, (sum, user) => 
+                                                                                                sum + delegators.get(user).bonded.get(validator).fold(0, (total, elem) => 
+                                                                                                                                                         total + elem.amount)) == validators.get(validator).stake.get(pos.epoch + PIPELINE_OFFSET))
+
+    // Invariant 6: The total amount of tokens is constant.
+    val totalAmountTokensConstant = USERS.fold(0, (sum, user) => sum + delegators.get(user).balance) + pos.posAccount + pos.slashPool== size(USERS)*INIT_BALANCE
+
+    // Invariant 7: A validator's stake cannot become negative.
     val stakeGreaterZero = VALIDATORS.forall(validator =>
                                              pos.epoch.to(pos.epoch + PIPELINE_OFFSET).forall(e => validators.get(validator).stake.get(e) >= 0))
 
-    // Invariant 4: The PoS account cannot become negative.
-    val posAccountGreaterZero = pos.posAccount >= 0
-
-    // Invariant 5: The validator's stake is the sum of its delegations.
-    val stakeEqualSumBonds = VALIDATORS.forall(validator => USERS.fold(0, (sum, user) => 
-                                                                           sum + delegators.get(user).bonded.get(validator).fold(0, (total, elem) =>
-                                                                                                                                     total + elem.amount) ) == validators.get(validator).stake.get(pos.epoch + PIPELINE_OFFSET))
-
-    //Invarriant 6: The user's balance cannot become greater than the initial balance
+    //Invariant 8: The user's balance cannot become greater than the initial balance
     val boundedBalance = USERS.forall(user => delegators.get(user).balance <= INIT_BALANCE)
 
     // All invariants
-    val allInvariants = totalAmountTokensConstant and
-                        balanceGreaterZero and
-                        stakeGreaterZero and
+    val allInvariants = balanceGreaterZero and
                         posAccountGreaterZero and
-                        //stakeEqualSumBonds and
+                        posAccountZero and
+                        stakeEqualOrLessSumBonds and
+                        noSlashingStakeEqualSumBonds and
+                        totalAmountTokensConstant and
+                        stakeGreaterZero and
                         boundedBalance
     
     /* ****************************************************************************
@@ -444,14 +457,15 @@ module namada {
     action step: bool = {
         nondet user = USERS.oneOf()
         nondet validator = VALIDATORS.oneOf()
-        nondet amount = 1.to(MAX_UINT).oneOf()
+        nondet amount = 0.to(MAX_UINT).oneOf()
         nondet e = (pos.epoch - UNBONDING_OFFSET).to(pos.epoch).oneOf()
         // Execute one of the available actions/methods
         any {
-            actionEvidence(e, validator),
             actionDelegate(user, validator, amount),
             actionUnbond(user, validator, amount),
-            actionWithdraw(user, validator)
+            actionWithdraw(user, validator),
+            actionEvidence(e, validator)
+            //allUnchanged
         }
     }
 
@@ -544,17 +558,22 @@ module namada {
     run fullExecutionTest = {
       nondet user = USERS.oneOf()
       nondet validator = VALIDATORS.oneOf()
+      nondet amount = 1.to(INIT_BALANCE - 3).oneOf()
+      nondet amountUnbonded = 1.to(amount).oneOf()
       all {
+        require(UNBONDING_OFFSET<=2 and INIT_BALANCE>=4),
         init
-        .then(actionDelegate(user, validator, 10))
-        .then(actionEvidence(3, validator))
-        .then(actionUnbond(user, validator, 5))
+        .then(actionDelegate(user, validator, amount))
+        .then(actionEvidence(UNBONDING_OFFSET + 1, validator))
+        .then(actionUnbond(user, validator, amountUnbonded))
         .then(actionDelegate(user, validator, 1))
         .then(actionDelegate(user, validator, 1))
         .then(actionDelegate(user, validator, 1))
         .then(actionWithdraw(user, validator))
         // the 5 tokens unbonded shoul be slashed
-        .then(all{ assert(delegators.get(user).balance == 7), allUnchanged})
+        .then(all{ assert(delegators.get(user).balance == INIT_BALANCE - amount - 3),
+                   assert(pos.slashPool == amount),
+                   allUnchanged })
         
       }
     }
