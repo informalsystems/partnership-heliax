@@ -22,19 +22,19 @@
 
 ## Definitions
 
-- `pipeline_length` and `unbonding_length` define two epoch offsets. Note that `pipeline_length` must be equal to or greater than `unbonding_length`.
+- `pipeline_length` and `unbonding_length` define two epoch offsets. Note that `unbonding_length` must be greater than or equal to `pipeline_length`.
 
 ### Redelegations' Specific Terminology
 
-- A redelegation involves two validators. We use `source validator` to refer the validator from which the tokens are taken and `destination validator` to to refer to the validator to which the tokens are delegated.
+- A redelegation involves two validators. We use `source validator` to refer the validator from which the tokens are taken and `destination validator` to refer to the validator to which the tokens are delegated.
 
 - Given a `redelegation`, the `redelegation's starting epoch` is the epoch at which the redelegation transaction is processed. The `redelegation's ending epoch` is the epoch at which the redelegated tokens start contributing to the destination delegator. In the current design, if a redelegation's starting epoch is `e`, then its ending epoch would be `e + pipeline_length`. In the text throughout the specification, for a given `redelegation`, we use `redelegation.start` and `redelegation.end` to refer to the starting and ending epoch of the redelegation.
 
 - A redelegation is composed of one or more bonds (aka `redelegation bonds`). Each redelegation bond is a pair of the epoch at which the redelegated tokens started contributing to the stake of the source validator and the amount of tokens. It is important to keep track of the starting epochs in order to apply slashes precisely.
 
-- Given a redelegation, we call `redelegation slashing window` the set of consecutive epochs in which the destination validator may be slashed due to the misbehaviour of the source validator.
+- Given a redelegation, we call `redelegation slashing window` the set of consecutive epochs in which the destination validator may be slashed due to a misbehaviour of the source validator.
   - In the current design, the redelegation slashing window of a redelegation spans from `redelegation.start - unbonding_length` up to `redelegation.end - 1`.
-  - The window's lower bound if determined by the fact that when a redelegation is issued, we apply all slashes of the source validator already processed. This means any slash for an infraction committed at en epoch `< redelegation.start - unbonding_length`.
+  - The window's lower bound is determined by the fact that when a redelegation is issued, we apply all slashes of the source validator already processed. This means any slash for an infraction committed at an epoch `< redelegation.start - unbonding_length`.
   - The window's upper bound is determined by the epoch at which the redelegated tokens stop contributing to the stake of the source validator.
 
 - We say a redelegation is a `chain redelegation` when the source validator redelegates some tokens that were redelegated by a second validator while infractions of the latter validator can still be processed. In the current design, a redelegation is considered a chain redelegation if already redelegated tokens are redelegated before the end of the initial redelegation `+ unbonding_length`. This is simple to compute:
@@ -275,16 +275,17 @@ tx_withdraw_unbonds_delegator(delegator_address)
 }
 ```
 
-The transaction `tx_redelegate` creates a redelegation from source validator `src_validator_address` to `dest_validator_address` for any tokens that a delegator `delegator_address` has currently delegated to the source validator. The transactions takes the following steps:
+The transaction `tx_redelegate` creates a redelegation from source validator `src_validator_address` to `dest_validator_address` for any tokens that a delegator `delegator_address` has currently delegated to the source validator. The transaction takes the following steps:
 
-1. The function first checks that the source validator is not frozen. This is to prevent unbonding at an epoch `e` from a validator that it is known to have behaved, but the slash has not been processed yet.
+1. The function first checks that the source validator is not frozen. This is to prevent unbonding at an epoch `e` from a validator that is known to have misbehaved, but the slash has not been processed yet.
 2. Then it checks that the redelegation is not a chain redelegation, in which case it prevents it by returning.
    - The design does not track chain redelegation precisely.
-   - Instead approximates it by preventing a validator to redelegate tokens belonging to a delegator if it has received a redelegation of tokens belonging to the same delegator that ended `unbonding_length` epochs ago. Please read the definition of chain redelegation in [Definitions](#definitions) for more details.
+   - Instead approximates it by preventing a validator from redelegating tokens belonging to a delegator if it has received a redelegation of tokens belonging to the same delegator that ended `unbonding_length` epochs ago. Please read the definition of chain redelegation in [Definitions](#definitions) for more details.
+   - The `incoming_redelegations` variable is used to implement this mechanism.
 3. The function computes the total amount of tokens that the delegator has bonded at the source validator (`bonded_tokens`).
 4. It unbonds `bonded_tokens` from the source validator indicating that it is a redelegation by calling `unbond` with the delegator's address.
 5. It creates the bond at the destination validator.
-6. It stores the redelegation's end epoch in the destination validator `incoming_redelegations` variable.
+6. It stores the redelegation's end epoch in the destination validator's `incoming_redelegations` variable.
 7. It finally updates the destination validator `total_deltas`, voting power, total voting power and validator sets.
 
 ```go
