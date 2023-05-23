@@ -55,6 +55,7 @@ type Slash struct {
   validator Addr
   rate float
   voting_power VotingPower // the voting power used to commit the infraction
+  slash_type string
 }
 
 type WeightedValidator struct {
@@ -494,8 +495,8 @@ func is_validator(validator_address, epoch){
 ```go
 func get_min_slash_rate(infraction){
   switch infraction
-    case duplicate_vote: return duplicate_vote_rate
-    case light_client_attack: return light_client_attack
+    case "duplicate_vote": return duplicate_vote_rate
+    case "light_client_attack": return light_client_attack_rate
     default: panic()
 }
 ```
@@ -504,16 +505,17 @@ func get_min_slash_rate(infraction){
 // Processes the enqueued slashes by calculating the cubic slashing rate and then slashing the validator's deltas (stake)
 end_of_epoch()
 {
+  var infraction_epoch = cur_epoch - unbonding_length
   // Iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
   var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1}
   // Calculate the cubic slash rate for all slashes processed this epoch (Step 2.2 of cubic slashing)
-  var cubic_rate = compute_cubic_rate(set_slashes, cur_epoch)
+  var cubic_rate = compute_cubic_rate(set_slashes, infraction_epoch)
   // Iterate over validators with enqueued slashes this epoch
   var set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
   forall (validator_address in set_validators) do
     forall (slash in {s | s in enqueued_slashes[cur_epoch] && s.validator == validator_address}) do
       // Set the slash on the now "finalized" slash amount in storage (Step 2.3 of cubic slashing)
-      slash.rate = max{get_min_slash_rate(slash), cubic_rate}
+      slash.rate = min{1.0, max{get_min_slash_rate(slash.slash_type), cubic_rate}}
       append(slashes[validator_address], slash)
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
       
@@ -566,11 +568,11 @@ get_total_active_voting_power(epoch)
 // Cubic slashing function
 compute_cubic_rate(slashes, epoch)
 {
-  var total_active_voting_power = get_total_active_voting_power
+  var total_active_voting_power = get_total_active_voting_power(epoch)
   var voting_power_fraction = 0
   forall (slash in slashes) do
     voting_power_fraction += slash.voting_power / total_active_voting_power
-  return min{1, 9 * voting_power_fraction^2}
+  return 9 * voting_power_fraction^2
 }
 ```
 
