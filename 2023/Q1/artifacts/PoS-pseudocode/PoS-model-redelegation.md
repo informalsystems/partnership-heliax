@@ -32,7 +32,7 @@
 
 - A redelegation is composed of one or more bonds (aka `redelegation bonds`). Each redelegation bond is a pair of the epoch at which the redelegated tokens started contributing to the stake of the source validator and the amount of tokens. It is important to keep track of the starting epochs in order to apply slashes precisely.
 
-- Given a redelegation, we call `redelegation slashing window` the set of consecutive epoch in which the destination validator may be slashed due to the misbehave of the source validator.
+- Given a redelegation, we call `redelegation slashing window` the set of consecutive epochs in which the destination validator may be slashed due to the misbehaviour of the source validator.
   - In the current design, the redelegation slashing window of a redelegation spans from `redelegation.start - unbonding_length` up to `redelegation.end - 1`.
   - The window's lower bound if determined by the fact that when a redelegation is issued, we apply all slashes of the source validator already processed. This means any slash for an infraction committed at en epoch `< redelegation.start - unbonding_length`.
   - The window's upper bound is determined by the epoch at which the redelegated tokens stop contributing to the stake to the source validator.
