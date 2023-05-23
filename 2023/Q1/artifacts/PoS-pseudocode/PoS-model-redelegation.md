@@ -548,7 +548,7 @@ func compute_stake_fraction(infraction, voting_power){
 The function `end_of_epoch` is called at the end of every epoch. It takes the following steps:
 
 1. It first computes the slash rate for any slash that has to be processed at the end of the current epoch.
-2. The iterates over the enqueued slashes. For each slash:
+2. It then iterates over the enqueued slashes. For each slash:
    - It appends the slash to the misbehaving validator's set of slashes.
    - It uses the `slash_validator` function to slash the misbehaving validator.
    - It iterates over all validators to which there is an ongoing redelegation from the misbehaving validator. For each destination validator, the function computes the total amount of tokens that are slashable: those belonging to a redelegation for which (i) the redelegation's slashing window includes the misbehaving epoch, and (ii) that were bonded to the the source validator before the misbehaving epoch. If there are tokens to be slashed (`total_amount > 0`), then the function uses `slash_validator` to slash the destination validator.
