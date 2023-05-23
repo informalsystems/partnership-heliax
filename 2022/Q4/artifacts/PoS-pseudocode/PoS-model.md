@@ -54,7 +54,7 @@ type Slash struct {
   epoch Epoch
   validator Addr
   rate float
-  stake_fraction float //new in cubic slashing
+  voting_power VotingPower // the voting power used to commit the infraction
 }
 
 type WeightedValidator struct {
@@ -346,7 +346,7 @@ func new_evidence(evidence)
 {
   //create slash
   var total_staked = read_epoched_field(validators[evidence.validator].total_deltas, evidence.epoch, 0)
-  var slash = Slash{epoch: evidence.epoch, validator: evidence.validator, rate: 0, stake_fraction: compute_stake_fraction(evidence.type, total_staked)}
+  var slash = Slash{epoch: evidence.epoch, validator: evidence.validator, rate: 0, voting_power: total_staked}
   //enqueue slash (Step 1.1 of cubic slashing)
   append(enqueued_slashes[evidence.epoch + unbonding_length], slash)
   //jail validator (Step 1.2 of cubic slashing)
@@ -492,15 +492,6 @@ func is_validator(validator_address, epoch){
 ```
 
 ```go
-func compute_stake_fraction(infraction, voting_power){
-  switch infraction
-    case duplicate_vote: return duplicate_vote_rate * voting_power
-    case ligth_client_attack: return ligth_client_attack_rate * voting_power
-    default: panic()
-}
-```
-
-```go
 func get_min_slash_rate(infraction){
   switch infraction
     case duplicate_vote: return duplicate_vote_rate
@@ -516,13 +507,13 @@ end_of_epoch()
   // Iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
   var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1}
   // Calculate the cubic slash rate for all slashes processed this epoch (Step 2.2 of cubic slashing)
-  var rate = compute_final_rate(set_slashes)
+  var cubic_rate = compute_cubic_rate(set_slashes, cur_epoch)
   // Iterate over validators with enqueued slashes this epoch
   var set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
   forall (validator_address in set_validators) do
     forall (slash in {s | s in enqueued_slashes[cur_epoch] && s.validator == validator_address}) do
       // Set the slash on the now "finalized" slash amount in storage (Step 2.3 of cubic slashing)
-      slash.rate = max{get_min_slash_rate(slash), rate}
+      slash.rate = max{get_min_slash_rate(slash), cubic_rate}
       append(slashes[validator_address], slash)
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
       
@@ -561,13 +552,25 @@ end_of_epoch()
 ```
 
 ```go
-//Cubic slashing function
-compute_final_rate(slashes)
+// Get total stake of active (consensus-participating) validators
+get_total_active_voting_power(epoch)
 {
+  var voting_power = 0
+  forall (validator in validator_sets[epoch].active)
+    voting_power += validator.voting_power
+  return voting_power
+}
+```
+
+```go
+// Cubic slashing function
+compute_cubic_rate(slashes, epoch)
+{
+  var total_active_voting_power = get_total_active_voting_power
   var voting_power_fraction = 0
   forall (slash in slashes) do
-    voting_power_fraction += slash.voting_power_fraction
-  return max{0.01, min{1, voting_power_fraction^2 * 9}}
+    voting_power_fraction += slash.voting_power / total_active_voting_power
+  return min{1, 9 * voting_power_fraction^2}
 }
 ```
 
