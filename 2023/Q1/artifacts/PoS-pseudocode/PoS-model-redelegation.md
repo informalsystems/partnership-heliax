@@ -540,7 +540,7 @@ func new_evidence(evidence)
 func compute_stake_fraction(infraction, voting_power){
   switch infraction
     case duplicate_vote: return duplicate_vote_rate * voting_power
-    case ligth_client_attack: return ligth_client_attack_rate * voting_power
+    case light_client_attack: return light_client_attack_rate * voting_power
     default: panic()
 }
 ```
