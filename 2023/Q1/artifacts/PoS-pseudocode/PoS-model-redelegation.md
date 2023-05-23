@@ -374,7 +374,7 @@ func unbond(validator_address, delegator_address, total_amount, dest_validator_a
       var amount_after_slashing = 0
       //iterate over bonds and create unbonds
       forall (<start, amount> in delbonds while remain > 0) do
-        //Retrieve the bond's associated redelegation record (if any)
+        //Retrieve the bond's associated redelegation records (if any)
         var number_redelegations = redelegated_bonds[delegator_address][validator_address][start].size()
         //Take the minimum between the remainder and the unbond. This is equal to amount if remain > amount and remain otherwise 
         var amount_unbonded = min{amount, remain}
