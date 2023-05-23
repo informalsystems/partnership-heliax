@@ -22,7 +22,7 @@
 
 ## Definitions
 
-- `pipeline_length` and `unbonding_length` define two epoch offsets. Note that `pipeline_length` must be greater or equal to `unbonding_length`.
+- `pipeline_length` and `unbonding_length` define two epoch offsets. Note that `pipeline_length` must be equal to or greater than `unbonding_length`.
 
 ### Redelegations' Specific Terminology
 
