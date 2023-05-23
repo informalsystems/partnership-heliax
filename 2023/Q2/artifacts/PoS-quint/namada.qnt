@@ -312,7 +312,7 @@ module namada {
     * The action commonTxAfter is called after a transaction is executed.
     * 1. It first checks if it is the last transaction of the current epoch.
     * 2. If it is the last transaction of the epoch, it calls the endOfEpoch.
-    * 3. Otherwise, it updates the variables using the result of the transaciton.
+    * 3. Otherwise, it updates the variables using the result of the transaciton and increases counterTxs.
     */
 
     action commonTxAfter(user: Address, validator: Address, result: ResultTx): bool = all {
@@ -360,7 +360,6 @@ module namada {
     }
 
     action actionEvidence(e: Epoch, validator: Address): bool = all {
-      //if (limitEvidence) require(validators.get(validator).frozen < e) else true,
       require(limitEvidence implies validators.get(validator).frozen < e),
       val result = proccessEvidence(e, validators.get(validator), pos)
       all {
@@ -368,6 +367,18 @@ module namada {
         pos' = result.posState,
         delegators' = delegators,
         lastTx' = {tag: "Evidence", result: true, user: "", validator: validator, amount: e}
+      }
+    }
+
+    action actionAdvanceEpoch(user: Address, validator: Address, amount: int, e: Epoch): bool = all {
+      require(delegate(delegators.get(user), validators.get(validator), pos, amount).success == false and
+              unbond(delegators.get(user), validators.get(validator), pos, amount).success == false and
+              withdraw(delegators.get(user), validators.get(validator), pos).success == false and
+              limitEvidence implies validators.get(validator).frozen >= e),
+      val result = {success: true, delegatorState: delegators.get(user), validatorState: validators.get(validator), posState: pos}
+      all {
+        commonTxAfter(user, validator, result),
+        lastTx' = {tag: "Advance", result: result.success, user: user, validator: validator, amount: 0}
       }
     }
 
@@ -464,7 +475,8 @@ module namada {
             actionDelegate(user, validator, amount),
             actionUnbond(user, validator, amount),
             actionWithdraw(user, validator),
-            actionEvidence(e, validator)
+            actionEvidence(e, validator),
+            actionAdvanceEpoch(user, validator, amount, e)
             //allUnchanged
         }
     }
