@@ -35,7 +35,7 @@
 - Given a redelegation, we call `redelegation slashing window` the set of consecutive epochs in which the destination validator may be slashed due to the misbehaviour of the source validator.
   - In the current design, the redelegation slashing window of a redelegation spans from `redelegation.start - unbonding_length` up to `redelegation.end - 1`.
   - The window's lower bound if determined by the fact that when a redelegation is issued, we apply all slashes of the source validator already processed. This means any slash for an infraction committed at en epoch `< redelegation.start - unbonding_length`.
-  - The window's upper bound is determined by the epoch at which the redelegated tokens stop contributing to the stake to the source validator.
+  - The window's upper bound is determined by the epoch at which the redelegated tokens stop contributing to the stake of the source validator.
 
 - We say a redelegation is a `chain redelegation` when the source validator redelegates some tokens that were redelegated by a second validator while infractions of the latter validator can still be processed. In the current design, a redelegation is considered a chain redelegation if already redelegated tokens are redelegated before the end of the initial redelegation `+ unbonding_length`. This is simple to compute:
   - Let `redelegation` be the initial redelegation and assume that `redelegation.start = e`.
