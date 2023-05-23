@@ -30,7 +30,7 @@
 
 - Given a `redelegation`, the `redelegation's starting epoch` is the epoch at which the redelegation transaction is processed. The `redelegation's ending epoch` is the epoch at which the redelegated tokens start contributing to the destination delegator. In the current design, if a redelegation's starting epoch is `e`, then its ending epoch would be `e + pipeline_length`. In the text throughout the specification, for a given `redelegation`, we use `redelegation.start` and `redelegation.end` to refer to the starting and ending epoch of the redelegation.
 
-- A redelegation is composed by one or more bonds (aka `redelegation bonds`). Each redelegation bond is a pair the epoch at which the redelegated tokens started contributing to the stake of the source validator and the amount of tokens. It is important to keep track of the starting epochs in order to apply slashes precisely.
+- A redelegation is composed of one or more bonds (aka `redelegation bonds`). Each redelegation bond is a pair of the epoch at which the redelegated tokens started contributing to the stake of the source validator and the amount of tokens. It is important to keep track of the starting epochs in order to apply slashes precisely.
 
 - Given a redelegation, we call `redelegation slashing window` the set of consecutive epoch in which the destination validator may be slashed due to the misbehave of the source validator.
   - In the current design, the redelegation slashing window of a redelegation spans from `redelegation.start - unbonding_length` up to `redelegation.end - 1`.
