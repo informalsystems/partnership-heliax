@@ -280,8 +280,7 @@ The transaction `tx_redelegate` creates a redelegation from source validator `sr
 1. The function first checks that the source validator is not frozen. This is to prevent unbonding at an epoch `e` from a validator that it is known to have behaved, but the slash has not been processed yet.
 2. Then it checks that the redelegation is not a chain redelegation, in which case it prevents it by returning.
    - The design does not track chain redelegation precisely.
-   - Instead approximates it by preventing a validator to redelegate tokens belonging to a delegator if it has recently received a redelegation of tokens belonging to the same delegator.
-   - The `incoming_redelegations` variable is used to implement this mechanism.
+   - Instead approximates it by preventing a validator to redelegate tokens belonging to a delegator if it has received a redelegation of tokens belonging to the same delegator that ended `unbonding_length` epochs ago. Please read the definition of chain redelegation in [Definitions](#definitions) for more details.
 3. The function computes the total amount of tokens that the delegator has bonded at the source validator (`bonded_tokens`).
 4. It unbonds `bonded_tokens` from the source validator indicating that it is a redelegation by calling `unbond` with the delegator's address.
 5. It creates the bond at the destination validator.
