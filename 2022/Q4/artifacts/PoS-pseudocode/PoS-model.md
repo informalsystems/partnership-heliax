@@ -559,7 +559,7 @@ get_total_active_voting_power(epoch)
 {
   var voting_power = 0
   forall (validator in validator_sets[epoch].active)
-    voting_power += validator.voting_power
+    voting_power += read_epoched_field(validators[validator].voting_power, epoch, 0)
   return voting_power
 }
 ```
