@@ -334,7 +334,7 @@ compute_amount_after_slashing(set_slashes, amount) {
   // Now apply the slashes
   forall (slash in slash_rates in slash.epoch order) do
     // Update amount with slashes that happened more than `unbonding_length` before this slash
-    forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length < slash.epoch) do
+    forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length + cubic_slash_window_width < slash.epoch) do
       updated_amount = max{0, updated_amount - slashed_amount.amount}
       computed_amounts = computed_amounts \ {slashed_amount}
     computed_amounts = computed_amounts \union {SlashedAmount{epoch: slash.epoch, amount: updated_amount*slash.rate}}
@@ -545,7 +545,7 @@ end_of_epoch()
     // a..b notation determines an integer range: all integers between a and b inclusive
     forall (epoch in slash.epoch+1..cur_epoch) do
       forall ((unbond_start, unbond_amount) in validators[validator_address].set_unbonds[epoch] s.t. unbond_start <= infraction_epoch && unbond_amount > 0)
-        var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length < infraction_epoch}
+        var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length + cubic_slash_window_width < infraction_epoch}
         total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
 
     // For the future epochs, do the same as before but also update the deltas
@@ -560,7 +560,7 @@ end_of_epoch()
         // 2) unbond.end = cur_epoch + offset + unbonding_length => cur_epoch = unbond.end - offset - unbonding_length
         // By 1) s.epoch + unbonding_length < cur_epoch - unbonding_length
         // By 2) s.epoch + unbonding_length < unbond.end - offset - 2*unbonding_length => s.epoch < unbond.end - offset - 3*unbonding_length, as required.
-        var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length < infraction_epoch}
+        var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length + cubic_slash_window_width < infraction_epoch}
         total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
       var this_slash = (total_staked - total_unbonded) * total_rate
       var diff_slashed_amount = last_slash - this_slash
