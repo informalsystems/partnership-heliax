@@ -54,8 +54,8 @@ type Slash struct {
   epoch Epoch
   validator Addr
   rate float
+  type string
   voting_power VotingPower // the voting power used to commit the infraction
-  slash_type string
 }
 
 type WeightedValidator struct {
@@ -343,19 +343,19 @@ compute_amount_after_slashing(set_slashes, amount) {
 /* COMMENT
   what about if the evidence is for the very last epoch? Problem with ranges: +1 may not exist.
 */
-func new_evidence(evidence)
+func new_evidence(validator, infraction_epoch, type)
 {
   //create slash
-  var total_staked = read_epoched_field(validators[evidence.validator].total_deltas, evidence.epoch, 0)
-  var slash = Slash{epoch: evidence.epoch, validator: evidence.validator, rate: 0, voting_power: total_staked}
+  var total_staked = read_epoched_field(validators[validator].total_deltas, infraction_epoch, 0)
+  var slash = Slash{epoch: infraction_epoch, validator: validator, rate: 0, type: type, voting_power: total_staked}
   //enqueue slash (Step 1.1 of cubic slashing)
-  append(enqueued_slashes[evidence.epoch + unbonding_length], slash)
+  append(enqueued_slashes[infraction_epoch + unbonding_length], slash)
   //jail validator (Step 1.2 of cubic slashing)
-  validators[validator_address].jail_record = JailRecord{is_jailed: true, epoch: cur_epoch+1}
-  remove_validator_from_sets(validator_address, 1)
+  validators[validator].jail_record = JailRecord{is_jailed: true, epoch: cur_epoch+1}
+  remove_validator_from_sets(validator, 1)
   update_total_voting_power(1)
   //freeze validator to prevent delegators from altering their delegations (Step 1.3 of cubic slashing)
-  freeze_validator(validator_address)
+  freeze_validator(validator)
 }
 ```
 
