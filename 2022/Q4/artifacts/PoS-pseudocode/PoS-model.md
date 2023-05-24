@@ -544,7 +544,7 @@ end_of_epoch()
     // Find the total unbonded from the slash epoch up to the current epoch first
     // a..b notation determines an integer range: all integers between a and b inclusive
     forall (epoch in slash.epoch+1..cur_epoch) do
-      forall ((unbond_start, unbond_amount) in validators[validator_address].set_unbonds[epoch] s.t. unbond_start <= infraction_epoch)
+      forall ((unbond_start, unbond_amount) in validators[validator_address].set_unbonds[epoch] s.t. unbond_start <= infraction_epoch && unbond_amount > 0)
         var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length < infraction_epoch}
         total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
 
@@ -553,7 +553,7 @@ end_of_epoch()
     var last_slash = 0
     // Up to pipeline_length because there cannot be any unbond in a greater epoch (cur_epoch+pipeline_length is the upper bound)
     forall (offset in 1..pipeline_length) do
-      forall ((unbond_start, unbond_amount) in validators[validator_address].set_unbonds[cur_epoch + offset] s.t. unbond_start <= infraction_epoch) do
+      forall ((unbond_start, unbond_amount) in validators[validator_address].set_unbonds[cur_epoch + offset] s.t. unbond_start <= infraction_epoch && unbond_amount > 0) do
         // We only need to apply a slash s if s.epoch < unbond.end - unbonding_length
         // It is easy to see that s.epoch + unbonding_length < slash.epoch implies s.epoch < unbond.end - unbonding_length
         // 1) slash.epoch = cur_epoch - unbonding_length
