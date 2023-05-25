@@ -284,7 +284,7 @@ func unbond(validator_address, delegator_address, total_amount)
         bonds[delegator_address][validator_address].deltas[start] = amount - amount_unbonded
         unbonds[delegator_address][validator_address].deltas[start, withdraw_epoch] += amount_unbonded
         // Set of slashes that happened while the bond was contributing to the validator's stake
-        var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch }
+        var set_slashes = {s | s in slashes[validator_address] && start <= s.epoch }
         amount_after_slashing += compute_amount_after_slashing(set_slashes, amount_unbonded)
 
         validators[validator_address].set_unbonds[cur_epoch+pipeline_length][start] += amount_unbonded
