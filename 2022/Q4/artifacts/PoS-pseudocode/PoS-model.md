@@ -273,7 +273,7 @@ func unbond(validator_address, delegator_address, total_amount)
     // Compute sum of bonds from delegator to validator at the pipeline epoch (where an unbond will affect the deltas) and ensure that it is enough to accomodate the `total_amount` requested for unbonding
     var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[start] > 0 && start <= cur_epoch + pipeline_len}
     if (sum{amount | <start, amount> in delbonds} >= total_amount) then
-      var remain = total_amount
+      var remain = total_amount // Track the remaining bond amount to unbond
       var amount_after_slashing = 0 // Track the amount to change the deltas (may be less than `total_amount` due to previous slash processing)
       var withdraw_epoch = cur_epoch + pipeline_length + unbonding_length + cubic_slash_window_width
 
@@ -298,18 +298,18 @@ func unbond(validator_address, delegator_address, total_amount)
 
 ```go
 /* COMMENT: Something to check for correctness https://github.com/informalsystems/partnership-heliax/pull/16#discussion_r924319213 */
-//This function is called by transactions tx_withdraw_unbonds_validator and tx_withdraw_unbonds_delegator
+// This function is called by transactions tx_withdraw_unbonds_validator and tx_withdraw_unbonds_delegator.
+// Withdraws all tokens from PoS for all unbonds between the delegator adn validator that are fully matured as of the current epoch. Applies slashes to the unbonds, transferring all slashed tokens to the slash pool address and all unslashed tokens back to the source delegator.
 func withdraw(validator_address, delegator_address)
 {
   var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
-  //substract any pending slash before withdrawing
   forall (<start,end,amount> in selfunbonds) do
-    // set of slashes that happened while the bond associated with the unbond was contributing to the validator's stake
+    // Apply slashes that happened while the bond associated with the unbond was contributing to the validator's stake
     var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch && slash.epoch < end - unbonding_length - cubic_slash_window_width }
     var amount_after_slashing = compute_amount_after_slashing(set_slashes, amount)
     balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
-    //remove unbond
+    // Remove the unbond
     unbonds[delegator_address][validator_address].deltas[(start,end)] = 0
 }
 ```
@@ -319,7 +319,7 @@ compute_amount_after_slashing(set_slashes, amount) {
   var computed_amounts = {}
   var updated_amount = amount
   forall (slash in set_slashes in slash.epoch order) do
-    //Update amount with slashes that happened more than `unbonding_length` before this slash
+    // Update amount with slashes that happened more than `unbonding_length` before this slash
     forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length + cubic_slash_window_width < slash.epoch) do
       updated_amount -= slashed_amount.amount
       computed_amounts = computed_amounts \ {slashed_amount}
@@ -338,18 +338,19 @@ compute_amount_after_slashing(set_slashes, amount) {
 /* COMMENT
   what about if the evidence is for the very last epoch? Problem with ranges: +1 may not exist.
 */
+// Record evidence of a slash for future processing. Update the validator set with the removal of the offending validator, and mark the validator as jailed and frozen
 func new_evidence(validator, infraction_epoch, type)
 {
-  //create slash
+  // Create slash
   var total_staked = read_epoched_field(validators[validator].total_deltas, infraction_epoch, 0)
   var slash = Slash{epoch: infraction_epoch, validator: validator, rate: 0, type: type, voting_power: total_staked}
-  //enqueue slash (Step 1.1 of cubic slashing)
+  // Enqueue slash (Step 1.1 of cubic slashing)
   append(enqueued_slashes[infraction_epoch + unbonding_length + cubic_slash_window_width], slash)
-  //jail validator (Step 1.2 of cubic slashing)
+  // Jail validator (Step 1.2 of cubic slashing)
   validators[validator].jail_record = JailRecord{is_jailed: true, epoch: cur_epoch+1}
   remove_validator_from_sets(validator, 1)
   update_total_voting_power(1)
-  //freeze validator to prevent delegators from altering their delegations (Step 1.3 of cubic slashing)
+  // Freeze validator to prevent delegators from altering their delegations (Step 1.3 of cubic slashing)
   freeze_validator(validator)
 }
 ```
@@ -515,15 +516,15 @@ end_of_epoch()
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
       
       var total_unbonded = 0
-      //find the total unbonded from the slash epoch up to the current epoch first
-      //a..b notation determines an integer range: all integers between a and b inclusive
+      // Find the total unbonded from the slash epoch up to the current epoch first
+      // a..b notation determines an integer range: all integers between a and b inclusive
       forall (epoch in slash.epoch+1..cur_epoch) do
         forall ((unbond_start, unbond_amount) in validators[validator_address].unbond_records[epoch] s.t. unbond_start <= slash.epoch && unbond_amount > 0)
           var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length + cubic_slash_window_width < slash.epoch}
           total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
 
       var last_slash = 0
-      // up to pipeline_length because there cannot be any unbond in a greater ß (cur_epoch+pipeline_length is the upper bound)
+      // Up to pipeline_length because there cannot be any unbond in a greater ß (cur_epoch+pipeline_length is the upper bound)
       forall (offset in 1..pipeline_length) do
         forall ((unbond_start, unbond_amount) in validators[validator_address].unbond_records[cur_epoch + offset] s.t. unbond_start <= slash.epoch && unbond_amount > 0) do
           // We only need to apply a slash s if s.epoch < unbond.end - unbonding_length
