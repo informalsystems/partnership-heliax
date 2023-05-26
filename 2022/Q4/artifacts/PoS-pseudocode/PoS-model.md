@@ -31,7 +31,7 @@ type Validator struct {
   consensus_key map<Epoch, Key>
   state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
-  set_unbonds map<Epoch, Set<UnbondRecord>>
+  unbond_records map<Epoch, map<Epoch, amount:int>> // outer epoch for the unbond start, inner for the underlying bond start
   voting_power map<Epoch, VotingPower>
   reward_address Addr
   jail_record JailRecord
@@ -284,15 +284,8 @@ func unbond(validator_address, delegator_address, total_amount)
         // Set of slashes that happened while the bond was contributing to the validator's stake
         var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch }
         amount_after_slashing += compute_amount_after_slashing(set_slashes, amount_unbonded)
-        //The current model disregards a corner case that should be taken care of in the implementation:
-        //- Assume a user delegates 10 tokens to a validator at epoch e1
-        //- Assume the user unbonds twice 5 tokens from the same validator in the same epoch in two different transactions e2
-        //- When executing the first undelegate tx, the model creates the record UnbondRecord{amount: 5, start: e1} and updates the bond to 5 tokens
-        //- When executing the second undelegate tx, the model creates the same record UnbondRecord{amount: 5, start: e1} and removes the bond.
-        //- The problem is that we keep unbond records in a set and when we try to add the second record, since it is a duplicate, it will be discarded.
-        //It is an easy fix I'd say: use a bag instead of a set to allow duplicates, or check if the set includes the record and act upon
-        //(remove it, create a new one with double the amount, and add it).
-        validators[validator_address].set_unbonds[cur_epoch+pipeline_length] = {UnbondRecord{amount: amount_unbonded, start: start}} \union validators[validator_address].set_unbonds[cur_epoch+pipeline_length]
+
+        validators[validator_address].unbond_records[cur_epoch+pipeline_length][start] += amount_unbonded
         remain -= amount_unbonded
       update_total_deltas(validator_address, pipeline_length, -1*amount_after_slashing)
       update_voting_power(validator_address, pipeline_length)
@@ -523,22 +516,22 @@ end_of_epoch()
       //find the total unbonded from the slash epoch up to the current epoch first
       //a..b notation determines an integer range: all integers between a and b inclusive
       forall (epoch in slash.epoch+1..cur_epoch) do
-        forall (unbond in validators[validator_address].set_unbonds[epoch] s.t. unbond.start <= slash.epoch)
-          var set_prev_slashes = {s | s in slashes[validator_address] && unbond.start <= s.epoch && s.epoch + unbonding_length < slash.epoch}
-          total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond.amount)
+          var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length < slash.epoch}
+        forall ((unbond_start, unbond_amount) in validators[validator_address].unbond_records[epoch] s.t. unbond_start <= slash.epoch)
+          total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
 
       var last_slash = 0
       // up to pipeline_length because there cannot be any unbond in a greater ß (cur_epoch+pipeline_length is the upper bound)
       forall (offset in 1..pipeline_length) do
-        forall (unbond in validators[validator_address].set_unbonds[cur_epoch + offset] s.t. unbond.start <= slash.epoch) do
+        forall ((unbond_start, unbond_amount) in validators[validator_address].unbond_records[cur_epoch + offset] s.t. unbond_start <= slash.epoch) do
           // We only need to apply a slash s if s.epoch < unbond.end - unbonding_length
           // It is easy to see that s.epoch + unbonding_length < slash.epoch implies s.epoch < unbond.end - unbonding_length
           // 1) slash.epoch = cur_epoch - unbonding_length
           // 2) unbond.end = cur_epoch + offset + unbonding_length => cur_epoch = unbond.end - offset - unbonding_length
           // By 1) s.epoch + unbonding_length < cur_epoch - unbonding_length
           // By 2) s.epoch + unbonding_length < unbond.end - offset - 2*unbonding_length => s.epoch < unbond.end - offset - 3*unbonding_length, as required.
-          var set_prev_slashes = {s | s in slashes[validator_address] && unbond.start <= s.epoch && s.epoch + unbonding_length < slash.epoch}
-          total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond.amount)
+          var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length < slash.epoch}
+          total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
         var this_slash = (total_staked - total_unbonded) * slash.rate
         var diff_slashed_amount = last_slash - this_slash
         last_slash = this_slash
