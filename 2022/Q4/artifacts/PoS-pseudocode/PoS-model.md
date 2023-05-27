@@ -31,7 +31,7 @@ type Validator struct {
   consensus_key map<Epoch, Key>
   state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
-  unbond_records map<Epoch, map<Epoch, amount:int>> // outer epoch for the unbond start, inner for the underlying bond start
+  unbond_records map<Epoch, map<Epoch, amount:int>> // outer epoch for the unbond start (when the tokens stopped contributing to the validator's stake), inner for the underlying bond start
   voting_power map<Epoch, VotingPower>
   reward_address Addr
   jail_record JailRecord
