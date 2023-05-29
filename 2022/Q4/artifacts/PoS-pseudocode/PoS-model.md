@@ -289,13 +289,9 @@ func unbond(validator_address, delegator_address, total_amount)
 
         validators[validator_address].unbond_records[cur_epoch+pipeline_length][start] += amount_unbonded
         remain -= amount_unbonded
-      
-      // Ensure that the validator's stake does not go negative due to the slashing
-      var pipeline_stake = read_epoched_field(validators[validator_address].total_deltas, cur_epoch + pipeline_length, 0)
-      var token_change = min{ amount_after_slashing, pipeline_stake }
 
       // Apply the updates
-      update_total_deltas(validator_address, pipeline_length, -1*token_change)
+      update_total_deltas(validator_address, pipeline_length, -1*amount_after_slashing)
       update_voting_power(validator_address, pipeline_length)
       update_total_voting_power(pipeline_length)
       update_validator_sets(validator_address, pipeline_length)
