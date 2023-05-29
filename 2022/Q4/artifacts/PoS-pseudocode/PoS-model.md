@@ -502,8 +502,8 @@ func get_min_slash_rate(infraction){
 end_of_epoch()
 {
   var infraction_epoch = cur_epoch - unbonding_length - cubic_slash_window_width
-  // Iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
-  var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1}
+  // Iterate over all slashes for infractions within (- window, + window) epochs range (Step 2.1 of cubic slashing)
+  var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch - cubic_slash_window_width <= epoch <= cur_epoch + cubic_slash_window_width}
   // Calculate the cubic slash rate for all slashes processed this epoch (Step 2.2 of cubic slashing)
   var cubic_rate = compute_cubic_rate(set_slashes, infraction_epoch)
   // Iterate over validators with enqueued slashes this epoch
