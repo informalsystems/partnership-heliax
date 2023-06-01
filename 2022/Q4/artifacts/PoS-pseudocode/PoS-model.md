@@ -32,6 +32,7 @@ type Validator struct {
   state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
   unbond_records map<Epoch, map<Epoch, amount:int>> // outer epoch for the unbond start (when the tokens stopped contributing to the validator's stake), inner for the underlying bond start
+  total_bonded map<Epoch, amount:int>
   voting_power map<Epoch, VotingPower>
   reward_address Addr
   jail_record JailRecord
@@ -239,6 +240,7 @@ func bond(validator_address, delegator_address, amount)
   if is_validator(validator_address, cur_epoch+pipeline_length) then
     // Add bond amount to deltas at n + pipeline_length
     bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length] += amount
+    validators[validator_address].total_bonded[cur_epoch+pipeline_length] += amount
     // Debit amount from delegator account and credit it to the PoS account
     balances[delegator_address] -= amount
     balances[pos] += amount
@@ -536,12 +538,20 @@ end_of_epoch()
     // Find the total amount deducted from the deltas due to unbonds that became active after the infraction epoch. This is used to ensure the deltas are appropriately slashed.
     // Note: need to only do this once
     var total_unbonded = 0
+    var sum_post_bonds = 0
+
     // Find the total unbonded from the slash epoch up to the current epoch first
     // a..b notation determines an integer range: all integers between a and b inclusive
     forall (epoch in slash.epoch+1..cur_epoch) do
       forall ((unbond_start, unbond_amount) in validators[validator_address].unbond_records[epoch] s.t. unbond_start <= infraction_epoch && unbond_amount > 0)
         var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length + cubic_slash_window_width < infraction_epoch}
         total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
+
+      // Do not over-slash or improperly slash stake that did not exist at the infraction epoch
+      var recent_unbonds = 0
+      forall ((bond_start, amount) in validators[validator_address].unbond_records[epoch] s.t. amount > 0 && bond_start > infraction_epoch) do
+        recent_unbonds += amount  
+      sum_post_bonds += validators[validator_address].total_bonded[epoch] - recent_unbonds
 
     // For the future epochs, do the same as before but also update the deltas
     var last_slash = 0
@@ -561,7 +571,11 @@ end_of_epoch()
       last_slash = this_slash
 
       // Do not over-slash or improperly slash stake that did not exist at the infraction epoch
-      var sum_post_bonds = sum{bonds[validator_address].deltas[start] s.t. start > infraction_epoch && start <= cur_epoch + offset>}
+      var recent_unbonds = 0
+      forall ((bond_start, amount) in validators[validator_address].unbond_records[cur_epoch+offset] s.t. amount > 0 && bond_start > infraction_epoch) do
+        recent_unbonds += amount  
+      sum_post_bonds += validators[validator_address].total_bonded[cur_epoch+offset] - recent_unbonds
+      
       var validator_stake = read_epoched_field(validators[validator_address].total_deltas, cur_epoch + offset, 0)
       var slashable_stake = validator_stake - sum_post_bonds
       var change = min{-slashable_stake, diff_slashed_amount}
