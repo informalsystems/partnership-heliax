@@ -45,6 +45,11 @@ type Bond struct {
   deltas map<start:Epoch, int>
 }
 
+type GlobalBond struct {
+  validator Addr // not used
+  deltas map<start:Epoch, int>
+}
+
 type Unbond struct {
   validator Addr //not used
   source Addr //not used
@@ -90,6 +95,7 @@ cur_epoch ← 0 in Epoch //current epoch
 validators[] in Addr → Validator //map from address to validator
 balances[] in Addr → int //map from address to integer
 bonds[][] in (Addr X Addr) → Bond //map from address to map from address to bond
+global_bonds[] in Addr → GlobalBond //map from address to global bond
 unbonds[][] in (Addr X Addr) → Unbond  //map from (address, address) to unbond
 slashes[] in Addr → 2^Slash //map from address to list of slashes
 enqueued_slashes[] in Epoch → 2^Slash //map from epoch to list of slashes
@@ -240,7 +246,7 @@ func bond(validator_address, delegator_address, amount)
   if is_validator(validator_address, cur_epoch+pipeline_length) then
     // Add bond amount to deltas at n + pipeline_length
     bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length] += amount
-    validators[validator_address].total_bonded[cur_epoch+pipeline_length] += amount
+    global_bonds[validator_address].deltas[cur_epoch+pipeline_length] += amount
     // Debit amount from delegator account and credit it to the PoS account
     balances[delegator_address] -= amount
     balances[pos] += amount
@@ -284,6 +290,7 @@ func unbond(validator_address, delegator_address, total_amount)
         // Get the minimum of the remainder and the unbond, equal to amount if remain > amount and remain otherwise 
         var amount_unbonded = min{amount, remain}
         bonds[delegator_address][validator_address].deltas[start] = amount - amount_unbonded
+        global_bonds[validator_address].deltas[start] -= amount_unbonded
         unbonds[delegator_address][validator_address].deltas[start, withdraw_epoch] += amount_unbonded
         // Set of slashes that happened while the bond was contributing to the validator's stake
         var set_slashes = {s | s in slashes[validator_address] && start <= s.epoch }
@@ -538,20 +545,12 @@ end_of_epoch()
     // Find the total amount deducted from the deltas due to unbonds that became active after the infraction epoch. This is used to ensure the deltas are appropriately slashed.
     // Note: need to only do this once
     var total_unbonded = 0
-    var sum_post_bonds = 0
-
     // Find the total unbonded from the slash epoch up to the current epoch first
     // a..b notation determines an integer range: all integers between a and b inclusive
     forall (epoch in slash.epoch+1..cur_epoch) do
       forall ((unbond_start, unbond_amount) in validators[validator_address].unbond_records[epoch] s.t. unbond_start <= infraction_epoch && unbond_amount > 0)
         var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length + cubic_slash_window_width < infraction_epoch}
         total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
-
-      // Do not over-slash or improperly slash stake that did not exist at the infraction epoch
-      var recent_unbonds = 0
-      forall ((bond_start, amount) in validators[validator_address].unbond_records[epoch] s.t. amount > 0 && bond_start > infraction_epoch) do
-        recent_unbonds += amount  
-      sum_post_bonds += validators[validator_address].total_bonded[epoch] - recent_unbonds
 
     // For the future epochs, do the same as before but also update the deltas
     var last_slash = 0
@@ -571,11 +570,7 @@ end_of_epoch()
       last_slash = this_slash
 
       // Do not over-slash or improperly slash stake that did not exist at the infraction epoch
-      var recent_unbonds = 0
-      forall ((bond_start, amount) in validators[validator_address].unbond_records[cur_epoch+offset] s.t. amount > 0 && bond_start > infraction_epoch) do
-        recent_unbonds += amount  
-      sum_post_bonds += validators[validator_address].total_bonded[cur_epoch+offset] - recent_unbonds
-      
+      var sum_post_bonds = sum{global_bonds[validator_address].deltas[start] s.t. start > infraction_epoch && start <= cur_epoch + offset>}
       var validator_stake = read_epoched_field(validators[validator_address].total_deltas, cur_epoch + offset, 0)
       var slashable_stake = validator_stake - sum_post_bonds
       var change = min{-slashable_stake, diff_slashed_amount}
