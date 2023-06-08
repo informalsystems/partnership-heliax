@@ -34,7 +34,6 @@ type Validator struct {
   unbond_records map<Epoch, map<Epoch, amount:int>> // outer epoch for the unbond start (when the tokens stopped contributing to the validator's stake), inner for the underlying bond start
   total_bonded map<Epoch, amount:int>
   voting_power map<Epoch, VotingPower>
-  reward_address Addr
   jail_record JailRecord
   frozen map<Epoch, bool>
 }
@@ -309,7 +308,7 @@ func withdraw(validator_address, delegator_address)
   var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
   forall (<start,end,amount> in selfunbonds) do
     // Apply slashes that happened while the bond associated with the unbond was contributing to the validator's stake
-    var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch && slash.epoch < end - unbonding_length - cubic_slash_window_width }
+    var set_slashes = {s | s in slashes[validator_address] && start <= s.epoch && s.epoch < end - unbonding_length - cubic_slash_window_width }
     var amount_after_slashing = compute_amount_after_slashing(set_slashes, amount)
     balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
@@ -542,7 +541,7 @@ end_of_epoch()
 
     // Find the total unbonded from the slash epoch up to the current epoch first
     // a..b notation determines an integer range: all integers between a and b inclusive
-    forall (epoch in slash.epoch+1..cur_epoch) do
+    forall (epoch in infraction_epoch+1..cur_epoch) do
       forall ((unbond_start, unbond_amount) in validators[validator_address].unbond_records[epoch] s.t. unbond_start <= infraction_epoch && unbond_amount > 0)
         var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length + cubic_slash_window_width < infraction_epoch}
         total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
