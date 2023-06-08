@@ -333,7 +333,7 @@ module namada {
 
     // Computes the total amount of tokens unbonded by a validator that were contributing to the validator's that were bonded
     // to the validator after this misbehaved at a given epoch
-    // - @param infractionEpoc the misbehaving epoch.
+    // - @param infractionEpoch the misbehaving epoch.
     // - @param totalUnbonded the set of unbonded tokens in a map from bond starting epoch to amount of tokens.
     // - @returns an integer with the amount of tokens unbonded.
     pure def computeRecentTotalUnbonded(infractionEpoch: Epoch, totalUnbonded: Epoch -> int): int = {

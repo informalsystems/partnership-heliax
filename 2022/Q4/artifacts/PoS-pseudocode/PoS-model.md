@@ -31,7 +31,7 @@ type Validator struct {
   consensus_key map<Epoch, Key>
   state map<Epoch, {inactive, candidate}>
   total_deltas map<Epoch, amount:int>
-  set_unbonds map<Epoch, Set<UnbondRecord>>
+  unbond_records map<Epoch, map<Epoch, amount:int>> // outer epoch for the unbond start (when the tokens stopped contributing to the validator's stake), inner for the underlying bond start
   voting_power map<Epoch, VotingPower>
   reward_address Addr
   jail_record JailRecord
@@ -54,7 +54,8 @@ type Slash struct {
   epoch Epoch
   validator Addr
   rate float
-  stake_fraction float //new in cubic slashing
+  type string
+  voting_power VotingPower // the voting power used to commit the infraction
 }
 
 type WeightedValidator struct {
@@ -73,6 +74,7 @@ type ValidatorSet struct {
 ```go
 pipeline_length uint
 unbonding_length uint
+cubic_slash_window_width uint
 min_sentence uint
 votes_per_token uint
 duplicate_vote_rate float
@@ -98,18 +100,17 @@ total_voting_power[] in Epoch to VotingPower //map from epoch to voting_power
 ## Validator transactions
 
 ```go
-tx_become_validator(validator_address, consensus_key, staking_reward_address)
+tx_become_validator(validator_address, consensus_key)
 {
-  //check that become_validator has not been called before for validator_address
+  // Check that become_validator has not been called before for validator_address
   var state = read_epoched_field(validators[validator_address].state, cur_epoch+pipeline_length, ⊥)
-  if (state == ⊥ && validator_address != staking_reward_address) then
-    validators[validator_address].reward_address = staking_reward_address
-    //set status to candidate and consensus key at n + pipeline_length
+  if (state == ⊥) then
+    // Set status to candidate and consensus key at n + pipeline_length
     validators[validator_address].consensus_key[cur_epoch+pipeline_length] = consensus_key
     validators[validator_address].state[cur_epoch+pipeline_length] = candidate
     validators[validator_address].jail_record = JailRecord{is_jailed: false, epoch: ⊥}
     validators[validator_address].frozen[cur_epoch] = false
-    //add validator to the inactive set
+    // Add validator to the inactive set
     add_validator_to_sets(validator_address, pipeline_length)
 
 }
@@ -148,7 +149,7 @@ tx_reactivate(validator_address)
 ```go
 tx_unjail(validator_address)
 {
-  //check validator is jailed and can be unjailed
+  // Check validator is jailed and can be unjailed
   var epochs_jailed = cur_epoch + pipeline_length - validators[validator_address].jail_record.epoch
   if (is_jailed(validator_address) && (epochs_jailed > min_sentence)) then
     validators[validator_address].jail_record = JailRecord{is_jailed: false, epoch: ⊥}
@@ -232,18 +233,20 @@ tx_withdraw_unbonds_delegator(delegator_address)
 //A priori, the only possible values for offset_length are pipeline_length and unbonding_length.
 //This would mean that epoched variables may be update at different offsets which would require special handling.
 */
+// Bond tokens to a validator address. This can be done even if a validator is frozen or jailed.
 func bond(validator_address, delegator_address, amount)
 {
   if is_validator(validator_address, cur_epoch+pipeline_length) then
-    //add amount bond to delta at n+pipeline_length
+    // Add bond amount to deltas at n + pipeline_length
     bonds[delegator_address][validator_address].deltas[cur_epoch+pipeline_length] += amount
-    //debit amount from delegator account and credit it to the PoS account
+    // Debit amount from delegator account and credit it to the PoS account
     balances[delegator_address] -= amount
     balances[pos] += amount
-    update_total_deltas(validator_address, pipeline_lenght, amount)
-    update_voting_power(validator_address, pipeline_lenght)
-    update_total_voting_power(pipeline_lenght)
-    update_validator_sets(validator_address, pipeline_lenght)
+    // Update voting powers and validator set
+    update_total_deltas(validator_address, pipeline_length, amount)
+    update_voting_power(validator_address, pipeline_length)
+    update_total_voting_power(pipeline_length)
+    update_validator_sets(validator_address, pipeline_length)
 }
 ```
 
@@ -260,37 +263,31 @@ func bond(validator_address, delegator_address, amount)
     there is a problem with unbonding, slashing and total_deltas becoming negative
     conclusion: it is an actual issue, unresolved
 */
-//This function is called by transactions tx_unbond, tx_undelegate and tx_redelegate
+// This function is called by transactions tx_unbond, tx_undelegate and tx_redelegate.
+// Unbonds tokens from one or more existing bonds. The validator deltas are updated and include the effects of slashing. The amount deducted from the stake may be less than the `total_amount` unbonded because an already-processed slash may have effectively slashed the validator's stake already due to the bond that is currently being unbonded. Unbonding is forbidden while the target validator is frozen, but is allowed while the validator is jailed and not frozen.
 func unbond(validator_address, delegator_address, total_amount)
 {
-  //disallow unbonding if the validator is frozen
+  // Disallow unbonding if validator is frozen, ensure that the address is a validator at pipeline epoch
   var frozen = read_epoched_field(validators[validator_address].frozen, cur_epoch, false)
   if (is_validator(validator_address, cur_epoch+pipeline_length) && frozen == false) then
-    //compute total bonds from delegator to validator
-    var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[start] > 0 && start <= cur_epoch + unbonding_length}
-    //check if there are enough bonds
-    //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
+    // Compute sum of bonds from delegator to validator at the pipeline epoch (where an unbond will affect the deltas) and ensure that it is enough to accomodate the `total_amount` requested for unbonding
+    var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[start] > 0 && start <= cur_epoch + pipeline_len}
     if (sum{amount | <start, amount> in delbonds} >= total_amount) then
-      var remain = total_amount
-      var amount_after_slashing = 0
-      //Iterate over bonds and create unbond
+      var remain = total_amount // Track the remaining bond amount to unbond
+      var amount_after_slashing = 0 // Track the amount to change the deltas (may be less than `total_amount` due to previous slash processing)
+      var withdraw_epoch = cur_epoch + pipeline_length + unbonding_length + cubic_slash_window_width
+
+      // Iterate over bonds and create unbond
       forall (<start, amount> in delbonds while remain > 0) do
-        //Take the minimum between the remainder and the unbond. This is equal to amount if remain > amount and remain otherwise 
+        // Get the minimum of the remainder and the unbond, equal to amount if remain > amount and remain otherwise 
         var amount_unbonded = min{amount, remain}
         bonds[delegator_address][validator_address].deltas[start] = amount - amount_unbonded
-        unbonds[delegator_address][validator_address].deltas[start, cur_epoch+pipeline_length+unbonding_length] = amount_unbonded
-        // set of slashes that happened while the bond was contributing to the validator's stake
-        var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch }
+        unbonds[delegator_address][validator_address].deltas[start, withdraw_epoch] += amount_unbonded
+        // Set of slashes that happened while the bond was contributing to the validator's stake
+        var set_slashes = {s | s in slashes[validator_address] && start <= s.epoch }
         amount_after_slashing += compute_amount_after_slashing(set_slashes, amount_unbonded)
-        //The current model disregards a corner case that should be taken care of in the implementation:
-        //- Assume a user delegates 10 tokens to a validator at epoch e1
-        //- Assume the user unbonds twice 5 tokens from the same validator in the same epoch in two different transactions e2
-        //- When executing the first undelegate tx, the model creates the record UnbondRecord{amount: 5, start: e1} and updates the bond to 5 tokens
-        //- When executing the second undelegate tx, the model creates the same record UnbondRecord{amount: 5, start: e1} and removes the bond.
-        //- The problem is that we keep unbond records in a set and when we try to add the second record, since it is a duplicate, it will be discarded.
-        //It is an easy fix I'd say: use a bag instead of a set to allow duplicates, or check if the set includes the record and act upon
-        //(remove it, create a new one with double the amount, and add it).
-        validators[validator_address].set_unbonds[cur_epoch+pipeline_length] = {UnbondRecord{amount: amount_unbonded, start: start}} \union validators[validator_address].set_unbonds[cur_epoch+pipeline_length]
+
+        validators[validator_address].unbond_records[cur_epoch+pipeline_length][start] += amount_unbonded
         remain -= amount_unbonded
       update_total_deltas(validator_address, pipeline_length, -1*amount_after_slashing)
       update_voting_power(validator_address, pipeline_length)
@@ -301,18 +298,18 @@ func unbond(validator_address, delegator_address, total_amount)
 
 ```go
 /* COMMENT: Something to check for correctness https://github.com/informalsystems/partnership-heliax/pull/16#discussion_r924319213 */
-//This function is called by transactions tx_withdraw_unbonds_validator and tx_withdraw_unbonds_delegator
+// This function is called by transactions tx_withdraw_unbonds_validator and tx_withdraw_unbonds_delegator.
+// Withdraws all tokens from PoS for all unbonds between the delegator adn validator that are fully matured as of the current epoch. Applies slashes to the unbonds, transferring all slashed tokens to the slash pool address and all unslashed tokens back to the source delegator.
 func withdraw(validator_address, delegator_address)
 {
   var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
-  //substract any pending slash before withdrawing
   forall (<start,end,amount> in selfunbonds) do
-    // set of slashes that happened while the bond associated with the unbond was contributing to the validator's stake
-    var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch && slash.epoch < end - unbonding_length }
+    // Apply slashes that happened while the bond associated with the unbond was contributing to the validator's stake
+    var set_slashes = {s | s in slashes[validator_address] && start <= slash.epoch && slash.epoch < end - unbonding_length - cubic_slash_window_width }
     var amount_after_slashing = compute_amount_after_slashing(set_slashes, amount)
     balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
-    //remove unbond
+    // Remove the unbond
     unbonds[delegator_address][validator_address].deltas[(start,end)] = 0
 }
 ```
@@ -320,15 +317,15 @@ func withdraw(validator_address, delegator_address)
 ```go
 compute_amount_after_slashing(set_slashes, amount) {
   var computed_amounts = {}
-    var updated_amount = amount
-    forall (slash in set_slashes in slash.epoch order) do
-      //Update amount with slashes that happened more than `unbonding_length` before this slash
-      forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length < slash.epoch) do
-        updated_amount -= slashed_amount.amount
-        computed_amounts = computed_amounts \ {slashed_amount}
-      computed_amounts = computed_amounts \union {SlashedAmount{epoch: slash.epoch, amount: updated_amount*slash.rate}}
+  var updated_amount = amount
+  forall (slash in set_slashes in slash.epoch order) do
+    // Update amount with slashes that happened more than `unbonding_length` before this slash
+    forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length + cubic_slash_window_width < slash.epoch) do
+      updated_amount -= slashed_amount.amount
+      computed_amounts = computed_amounts \ {slashed_amount}
+    computed_amounts = computed_amounts \union {SlashedAmount{epoch: slash.epoch, amount: updated_amount*slash.rate}}
 
-    return updated_amount - sum({computed_amount.amount | computed_amount in computed_amounts})
+  return updated_amount - sum({computed_amount.amount | computed_amount in computed_amounts})
 }
 ```
 
@@ -341,19 +338,20 @@ compute_amount_after_slashing(set_slashes, amount) {
 /* COMMENT
   what about if the evidence is for the very last epoch? Problem with ranges: +1 may not exist.
 */
-func new_evidence(evidence)
+// Record evidence of a slash for future processing. Update the validator set with the removal of the offending validator, and mark the validator as jailed and frozen
+func new_evidence(validator, infraction_epoch, type)
 {
-  //create slash
-  var total_staked = read_epoched_field(validators[evidence.validator].total_deltas, evidence.epoch, 0)
-  var slash = Slash{epoch: evidence.epoch, validator: evidence.validator, rate: 0, stake_fraction: compute_stake_fraction(evidence.type, total_staked)}
-  //enqueue slash (Step 1.1 of cubic slashing)
-  append(enqueued_slashes[evidence.epoch + unbonding_length], slash)
-  //jail validator (Step 1.2 of cubic slashing)
-  validators[validator_address].jail_record = JailRecord{is_jailed: true, epoch: cur_epoch+1}
-  remove_validator_from_sets(validator_address, 1)
+  // Create slash
+  var total_staked = read_epoched_field(validators[validator].total_deltas, infraction_epoch, 0)
+  var slash = Slash{epoch: infraction_epoch, validator: validator, rate: 0, type: type, voting_power: total_staked}
+  // Enqueue slash (Step 1.1 of cubic slashing)
+  append(enqueued_slashes[infraction_epoch + unbonding_length + cubic_slash_window_width], slash)
+  // Jail validator (Step 1.2 of cubic slashing)
+  validators[validator].jail_record = JailRecord{is_jailed: true, epoch: cur_epoch+1}
+  remove_validator_from_sets(validator, 1)
   update_total_voting_power(1)
-  //freeze validator to prevent delegators from altering their delegations (Step 1.3 of cubic slashing)
-  freeze_validator(validator_address)
+  // Freeze validator to prevent delegators from altering their delegations (Step 1.3 of cubic slashing)
+  freeze_validator(validator)
 }
 ```
 
@@ -478,7 +476,6 @@ freeze_validator(validator_address)
   var epochs = {epoch | cur_epoch <= epoch <= cur_epoch+unbonding_length &&
                         (epoch > cur_epoch => validators[validator_address].frozen[epoch] != ⊥)}
   forall (epoch in epochs) do
-    var total = read_epoched_field(validators[validator_address].frozen, epoch, false)
     validators[validator_address].frozen[epoch] = true
   //schedule when to unfreeze the validator: after processing the enqueued slash
   validators[validator_address].frozen[cur_epoch+unbonding_length+1] = false
@@ -492,56 +489,57 @@ func is_validator(validator_address, epoch){
 ```
 
 ```go
-func compute_stake_fraction(infraction, voting_power){
+func get_min_slash_rate(infraction){
   switch infraction
-    case duplicate_vote: return duplicate_vote_rate * voting_power
-    case ligth_client_attack: return ligth_client_attack_rate * voting_power
+    case "duplicate_vote": return duplicate_vote_rate
+    case "light_client_attack": return light_client_attack_rate
     default: panic()
 }
 ```
 
 ```go
+// Processes the enqueued slashes by calculating the cubic slashing rate and then slashing the validator's deltas (stake)
 end_of_epoch()
 {
-  //iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
-  var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1}
-  //calculate the slash rate (Step 2.2 of cubic slashing)
-  var rate = compute_final_rate(set_slashes)
-
+  var infraction_epoch = cur_epoch - unbonding_length - cubic_slash_window_width
+  // Iterate over all slashes for infractions within (- window, + window) epochs range (Step 2.1 of cubic slashing)
+  var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch - cubic_slash_window_width <= epoch <= cur_epoch + cubic_slash_window_width}
+  // Calculate the cubic slash rate for all slashes processed this epoch (Step 2.2 of cubic slashing)
+  var cubic_rate = compute_cubic_rate(set_slashes, infraction_epoch)
+  // Iterate over validators with enqueued slashes this epoch
   var set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
   forall (validator_address in set_validators) do
     forall (slash in {s | s in enqueued_slashes[cur_epoch] && s.validator == validator_address}) do
-      //set the slash on the now "finalized" slash amount in storage (Step 2.3 of cubic slashing)
-      slash.rate = rate
+      // Set the slash on the now "finalized" slash amount in storage (Step 2.3 of cubic slashing)
+      slash.rate = min{1.0, max{get_min_slash_rate(slash.slash_type), cubic_rate}}
       append(slashes[validator_address], slash)
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
       
       var total_unbonded = 0
-      //find the total unbonded from the slash epoch up to the current epoch first
-      //a..b notation determines an integer range: all integers between a and b inclusive
+      // Find the total unbonded from the slash epoch up to the current epoch first
+      // a..b notation determines an integer range: all integers between a and b inclusive
       forall (epoch in slash.epoch+1..cur_epoch) do
-        forall (unbond in validators[validator_address].set_unbonds[epoch] s.t. unbond.start <= slash.epoch)
-          var set_prev_slashes = {s | s in slashes[validator_address] && unbond.start <= s.epoch && s.epoch + unbonding_length < slash.epoch}
-          total_unbonded = compute_amount_after_slashing(set_prev_slashes, unbond.amount)
+        forall ((unbond_start, unbond_amount) in validators[validator_address].unbond_records[epoch] s.t. unbond_start <= slash.epoch && unbond_amount > 0)
+          var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length + cubic_slash_window_width < slash.epoch}
+          total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
 
       var last_slash = 0
-      // up to pipeline_length because there cannot be any unbond in a greater ß (cur_epoch+pipeline_length is the upper bound)
+      // Up to pipeline_length because there cannot be any unbond in a greater ß (cur_epoch+pipeline_length is the upper bound)
       forall (offset in 1..pipeline_length) do
-        forall (unbond in validators[validator_address].set_unbonds[cur_epoch + offset] s.t. unbond.start <= slash.epoch) do
+        forall ((unbond_start, unbond_amount) in validators[validator_address].unbond_records[cur_epoch + offset] s.t. unbond_start <= slash.epoch && unbond_amount > 0) do
           // We only need to apply a slash s if s.epoch < unbond.end - unbonding_length
           // It is easy to see that s.epoch + unbonding_length < slash.epoch implies s.epoch < unbond.end - unbonding_length
           // 1) slash.epoch = cur_epoch - unbonding_length
           // 2) unbond.end = cur_epoch + offset + unbonding_length => cur_epoch = unbond.end - offset - unbonding_length
           // By 1) s.epoch + unbonding_length < cur_epoch - unbonding_length
           // By 2) s.epoch + unbonding_length < unbond.end - offset - 2*unbonding_length => s.epoch < unbond.end - offset - 3*unbonding_length, as required.
-          var set_prev_slashes = {s | s in slashes[validator_address] && unbond.start <= s.epoch && s.epoch + unbonding_length < slash.epoch}
-          total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond.amount)
+          var set_prev_slashes = {s | s in slashes[validator_address] && unbond_start <= s.epoch && s.epoch + unbonding_length + cubic_slash_window_width < slash.epoch}
+          total_unbonded += compute_amount_after_slashing(set_prev_slashes, unbond_amount)
         var this_slash = (total_staked - total_unbonded) * slash.rate
         var diff_slashed_amount = last_slash - this_slash
         last_slash = this_slash
         update_total_deltas(validator_address, offset, diff_slashed_amount)
         update_voting_power(validator_address, offset)
-        total_unbonded = 0
     //unfreeze the validator (Step 2.5 of cubic slashing)
     //this step is done in advance when the evidence is found
     //by setting validators[validator_address].frozen[cur_epoch+unbonding_length+1]=false
@@ -552,13 +550,25 @@ end_of_epoch()
 ```
 
 ```go
-//Cubic slashing function
-compute_final_rate(slashes)
+// Get total stake of active (consensus-participating) validators
+get_total_active_voting_power(epoch)
 {
+  var voting_power = 0
+  forall (validator in validator_sets[epoch].active)
+    voting_power += read_epoched_field(validators[validator].voting_power, epoch, 0)
+  return voting_power
+}
+```
+
+```go
+// Cubic slashing function
+compute_cubic_rate(slashes, epoch)
+{
+  var total_active_voting_power = get_total_active_voting_power(epoch)
   var voting_power_fraction = 0
   forall (slash in slashes) do
-    voting_power_fraction += slash.voting_power_fraction
-  return max{0.01, min{1, voting_power_fraction^2 * 9}}
+    voting_power_fraction += slash.voting_power / total_active_voting_power
+  return 9 * voting_power_fraction^2
 }
 ```
 
