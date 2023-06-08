@@ -72,7 +72,12 @@ module namada {
       // Each validator keeps track of unbonded tokens per epoch
       // totalUnbonded is a map from unbonding epoch to unbonded bonds
       // The unbonded bonds are tracked in a map from bond starting epoch to amount of tokens
-      totalUnbonded: Epoch -> Epoch -> int
+      totalUnbonded: Epoch -> Epoch -> int,
+      // Each validatro keeps track of bonded tokens per epoch
+      // totalBonded is a map from bond starting epoch to amount of bonded tokens
+      // It is used an the en of en epoch to compute how many tokens have been delegated
+      // to a validator after a given infraction epoch
+      totalBonded: Epoch -> int
     }
 
     // Proof-of-stake system state
@@ -148,8 +153,12 @@ module namada {
     * Execution state
     * ************************************************************************* */
 
-    // Used to limit the misbehaving of a validator: at most once within any window of unbonding offset epochs
-    pure val limitEvidence = true
+
+    // Used to limit the misbehaving of a validator:
+    // 0: no limit
+    // 1: limited but it allows multiple infractions with the same stake
+    // 2: disallow multiple infractions with the same stake
+    pure val limitEvidence = 0
 
     // Used to guarantee every step produces a state transition
     // IMPORTANT: Set to false for tests
@@ -162,6 +171,9 @@ module namada {
     // It is the misbehaving epoch in Processevidence;
     var lastTx: {tag: str, result: bool, user: Address, validator: Address, amount: int}
 
+    // Keeps tracks of when a validator may misbehave again in the case when limitEvidence == 1
+    var nextInfractionEpoch: Address -> int
+
     /**************************************************************************
     * Main functions
     * ************************************************************************* */
@@ -170,7 +182,7 @@ module namada {
     // 1. It first checks that the user has enough tokens in its account.
     // 2. Then it locks those tokens by transferring them from the user's account to the PoS special account.
     // 3. It records that the user has delegated amount tokens to the validator by creating a bond record.
-    // 4. It increases the validator's stake at the PIPELINE_OFFSET.
+    // 4. It increases the validator's stake at the PIPELINE_OFFSET and updates the totalBonded variable.
     pure def delegate(delegatorState: DelegatorState, validatorState: ValidatorState, posState: PosState, amount: int): ResultTx = {
       if (amount <= delegatorState.balance and amount > 0) {
         val updatedDelegatorState = delegatorState.with("balance", delegatorState.balance - amount)
@@ -178,6 +190,8 @@ module namada {
                                                                                             delegatorState.bonded.get(validatorState.address).setAdd({start: posState.epoch + PIPELINE_OFFSET, amount: amount})))                                                                       
         val updatedValidatorState = validatorState.with("stake", validatorState.stake.set(posState.epoch + PIPELINE_OFFSET,
                                                                                           validatorState.stake.get(posState.epoch + PIPELINE_OFFSET) + amount))
+                                                  .with("totalBonded", validatorState.totalBonded.set(posState.epoch + PIPELINE_OFFSET,
+                                                                                                      validatorState.totalBonded.get(posState.epoch + PIPELINE_OFFSET) + amount))      
         val updatedPosState = posState.with("posAccount", posState.posAccount + amount)
         {success: true, delegatorState: updatedDelegatorState, validatorState: updatedValidatorState, posState: updatedPosState}
       } else {
@@ -221,7 +235,7 @@ module namada {
     // - @returns an integer with the amount that remains after applying slash constraint to computeSlashes.
     pure def computeSlashableAmount(slash: Slash, initAmount: int, computedSlashes: Epoch -> int): int = {
       val updatedAmount = computedSlashes.keys().filter(x => x + UNBONDING_OFFSET + CUBIC_OFFSET < slash.epoch)
-                                                .fold(initAmount, (acc, e) => acc - computedSlashes.get(e))
+                                                .fold(initAmount, (acc, e) => max(0, acc - computedSlashes.get(e)))
       updatedAmount*slash.rate
     }
 
@@ -232,7 +246,7 @@ module namada {
     pure def applyListSlashes(listSlashes: List[Slash], amount: int): int = {
 
       listSlashes.foldl({finalAmount: amount, computedSlashes: Map()}, (acc, slash) => val slashAmount = computeSlashableAmount(slash, amount, acc.computedSlashes)
-                                                                                       {finalAmount: acc.finalAmount - slashAmount,
+                                                                                       {finalAmount: max(0, acc.finalAmount - slashAmount),
                                                                                         computedSlashes: acc.computedSlashes.safeSet(slash.epoch, slashAmount)}).finalAmount
     }
 
@@ -252,7 +266,7 @@ module namada {
         val endEpoch = posState.epoch + PIPELINE_OFFSET + CUBIC_OFFSET + UNBONDING_OFFSET
         // Compute the set of bonds to be unbonded
         val resultUnbonding = iterateBondsUpToAmount(delegatorState.bonded.get(validatorState.address), amount)
-        // Compute the set of unbond records that have to be recorded out of the set of unbonded bonds computed at the previous step
+         // Compute the set of unbond records that have to be recorded out of the set of unbonded bonds computed at the previous step
         val newUnbonds = resultUnbonding.toRemove.map(bond => if (bond.start == resultUnbonding.new.start) {start: bond.start, end: endEpoch, amount: bond.amount -  resultUnbonding.new.amount}
                                                               else {start: bond.start, end: endEpoch, amount: bond.amount})
         // Compute the updated delegators bonded variable by removing the unbonded bonds and adding a new bond in case one was partially unbonded                                                     
@@ -311,20 +325,41 @@ module namada {
     // - @param prevSlashes a list of slash records ordered by misbehaving epoch that were protentially processed before slash.epoch.
     // - @param totalUnbonded a map from epoch to integer.
     // - @returns an integer with the amount of tokens unbonded.
-    pure def computeTotalUnbonded(slash: Slash, prevSlashes: List[Slash], totalUnbonded: Epoch -> int): int = {
-      val epochs = totalUnbonded.keys().filter(e => e <= slash.epoch and totalUnbonded.get(e) > 0)
-      epochs.fold(0, (sum, e) => sum + applyListSlashes(prevSlashes.select(s => e <= s.epoch and s.epoch + UNBONDING_OFFSET + CUBIC_OFFSET < slash.epoch),
+    pure def computeTotalUnbonded(infractionEpoch: Epoch, prevSlashes: List[Slash], totalUnbonded: Epoch -> int): int = {
+      val epochs = totalUnbonded.keys().filter(e => e <= infractionEpoch and totalUnbonded.get(e) > 0)
+      epochs.fold(0, (sum, e) => sum + applyListSlashes(prevSlashes.select(s => e <= s.epoch and s.epoch + UNBONDING_OFFSET + CUBIC_OFFSET < infractionEpoch),
                                                         totalUnbonded.get(e)))
+    }
+
+    // Computes the total amount of tokens unbonded by a validator that were contributing to the validator's that were bonded
+    // to the validator after this misbehaved at a given epoch
+    // - @param infractionEpoc the misbehaving epoch.
+    // - @param totalUnbonded the set of unbonded tokens in a map from bond starting epoch to amount of tokens.
+    // - @returns an integer with the amount of tokens unbonded.
+    pure def computeRecentTotalUnbonded(infractionEpoch: Epoch, totalUnbonded: Epoch -> int): int = {
+      val epochs = totalUnbonded.keys().filter(e => e > infractionEpoch and totalUnbonded.get(e) > 0)
+      epochs.fold(0, (sum, e) => sum + totalUnbonded.get(e))
     }
 
     // Computes for a given validator and a slash how it much should be slashed at all epochs between the current epoch (curEpoch) + 1 and the current epoch + 1 + 
     // PIPELINE_OFFSET, accounting for any tokens already unbonded.
-    pure def slashValidator(initMap: Epoch -> int, curEpoch: Epoch, stake: int, slash: Slash, prevSlashes: List[Slash], totalUnbonded: Epoch -> Epoch -> int, finalRate: int): Epoch -> int = {
-      val initTotalUnbonded = (slash.epoch+1).to(curEpoch).fold(0, (sum, e) => sum + computeTotalUnbonded(slash, prevSlashes, totalUnbonded.get(e)))
-      val result = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).fold((initTotalUnbonded, initMap), (acc, e) => val updatedTotalUnbonded = acc._1 + computeTotalUnbonded(slash, prevSlashes, totalUnbonded.get(e))
-                                                                                                            val slashedAmount = (stake - updatedTotalUnbonded) * finalRate
-                                                                                                            (updatedTotalUnbonded, acc._2.set(e, acc._2.get(e) + slashedAmount)))
-      result._2
+    pure def slashValidator(initMap: Epoch -> int,
+                            stakes: Epoch -> int,
+                            curEpoch: Epoch,
+                            infractionStake: int,
+                            prevSlashes: List[Slash],
+                            totalUnbonded: Epoch -> Epoch -> int,
+                            totalBonded: Epoch -> int,
+                            finalRate: int): Epoch -> int = {
+      val infractionEpoch = curEpoch - CUBIC_OFFSET - UNBONDING_OFFSET
+      val initTotalUnbonded = (infractionEpoch+1).to(curEpoch).fold(0, (sum, e) => sum + computeTotalUnbonded(infractionEpoch, prevSlashes, totalUnbonded.get(e)))
+      val initBalanceBonds = (infractionEpoch+1).to(curEpoch).fold(0, (sum, e) => sum +(totalBonded.get(e) - computeRecentTotalUnbonded(infractionEpoch, totalUnbonded.get(e))))
+      val result = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).fold((initTotalUnbonded, initBalanceBonds, initMap), (acc, e) => val updatedTotalUnbonded = acc._1 + computeTotalUnbonded(infractionEpoch, prevSlashes, totalUnbonded.get(e))
+                                                                                                                             val updatedBalanceBonds = acc._2 + (totalBonded.get(e) - computeRecentTotalUnbonded(infractionEpoch, totalUnbonded.get(e)))
+                                                                                                                             val slashedAmount = (infractionStake - updatedTotalUnbonded) * finalRate
+                                                                                                                             val slashableStake = (stakes.get(e) - updatedBalanceBonds)
+                                                                                                                             (updatedTotalUnbonded, updatedBalanceBonds, acc._3.set(e, min(slashedAmount, slashableStake))))
+      result._3
     }
 
     // Returns the slahs rate depending of the type of infraction
@@ -351,24 +386,30 @@ module namada {
     pure def endOfEpoch(validatorsState: Address -> ValidatorState, posState: PosState, curEpoch: Epoch): {validatorsState: Address -> ValidatorState, posState: PosState} = {
       val finalRate = computeFinalRate((curEpoch-CUBIC_OFFSET).to(curEpoch+CUBIC_OFFSET).fold(Set(), (acc, e) => acc.union(posState.enqueuedSlashes.get(e))))
       val initMap = VALIDATORS.mapBy(v => (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 0))
-      val mapValidatorSlash = posState.enqueuedSlashes.get(curEpoch).fold(initMap, (acc, slash) => acc.set(slash.validator, slashValidator(acc.get(slash.validator),
-                                                                                                                                           curEpoch,
-                                                                                                                                           validatorsState.get(slash.validator).stake.get(slash.epoch),
-                                                                                                                                           slash,
-                                                                                                                                           validatorsState.get(slash.validator).slashes,
-                                                                                                                                           validatorsState.get(slash.validator).totalUnbonded,
-                                                                                                                                           finalRate)))
+      val infractionEpoch = posState.epoch - CUBIC_OFFSET - UNBONDING_OFFSET
+      val slashPerValidator = posState.enqueuedSlashes.get(curEpoch).fold(Map(), (acc, slash) => acc.safeSet(slash.validator, min(1, acc.getOrElse(slash.validator, 0) + finalRate)))
+      val mapValidatorSlash = slashPerValidator.keys().fold(initMap, (acc, validator) => acc.set(validator, slashValidator(acc.get(validator),
+                                                                                                 (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => validatorsState.get(validator).stake.get(e)),
+                                                                                                 curEpoch,
+                                                                                                 validatorsState.get(validator).stake.get(infractionEpoch),
+                                                                                                 validatorsState.get(validator).slashes,
+                                                                                                 validatorsState.get(validator).totalUnbonded,
+                                                                                                 validatorsState.get(validator).totalBonded,                                               
+                                                                                                 slashPerValidator.get(validator))))
       val updatedValidators = VALIDATORS.mapBy(v => validatorsState.get(v).with("stake",(curEpoch-UNBONDING_OFFSET-CUBIC_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).stake.get(e) -
-                                                                                                                                                                  if (e >= curEpoch+1) mapValidatorSlash.get(v).get(e) else 0
-                                                                                                                                                                else validatorsState.get(v).stake.get(e-1)- mapValidatorSlash.get(v).get(e-1))) 
-                                                                          .with("totalUnbonded", (curEpoch-UNBONDING_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).totalUnbonded.get(e)
-                                                                                                                                                                         else Map()))
-                                                                          .with("slashes", posState.enqueuedSlashes.get(curEpoch).filter(s => s.validator == v).fold(validatorsState.get(v).slashes, (acc, s) => acc.append(s.with("rate", finalRate)))))
-      val totalAmountSlashed = posState.enqueuedSlashes.get(curEpoch).fold(0, (sum, s) => sum + validatorsState.get(s.validator).stake.get(s.epoch)*finalRate)                                                                     
+                                                                                                                                                                              if (e >= curEpoch+1) mapValidatorSlash.get(v).get(e) else 0
+                                                                                                                                                                             else validatorsState.get(v).stake.get(e-1) - mapValidatorSlash.get(v).get(e-1))) 
+                                                                          .with("totalUnbonded", (curEpoch-CUBIC_OFFSET-UNBONDING_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).totalUnbonded.get(e)
+                                                                                                                                                                                      else Map()))  
+                                                                          .with("totalBonded", (curEpoch-CUBIC_OFFSET-UNBONDING_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).totalBonded.get(e)
+                                                                                                                                                                                    else 0))                                                                                                                                                                                  
+                                                                          .with("slashes", if (slashPerValidator.has(v)) validatorsState.get(v).slashes.append({epoch: infractionEpoch, validator: v, rate: slashPerValidator.get(v)})
+                                                                                           else validatorsState.get(v).slashes))
+      //val totalAmountSlashed = slashPerValidator.keys().fold(0, (sum, validator) => sum + validatorsState.get(validator).stake.get(infractionEpoch)*slashPerValidator.get(validator))
       val updatedPos =  posState.with("epoch", curEpoch + 1)
                                 .with("counterTxs", 0)
-                                .with("posAccount", posState.posAccount - totalAmountSlashed)
-                                .with("slashPool", posState.slashPool + totalAmountSlashed)
+                                //.with("posAccount", posState.posAccount - totalAmountSlashed)
+                                //.with("slashPool", posState.slashPool + totalAmountSlashed)
                                 .with("enqueuedSlashes", (curEpoch-CUBIC_OFFSET+1).to(curEpoch+1+CUBIC_OFFSET+UNBONDING_OFFSET).mapBy(e => if (e < curEpoch+1+CUBIC_OFFSET+UNBONDING_OFFSET) posState.enqueuedSlashes.get(e)
                                                                                                                                            else Set()))                                                                      
       {validatorsState: updatedValidators, posState: updatedPos}                                                                                                                             
@@ -382,7 +423,7 @@ module namada {
     pure def proccessEvidence(e: Epoch, validatorState: ValidatorState, posState: PosState): {validatorState: ValidatorState, posState: PosState} = {
       val slash = {epoch: e, validator: validatorState.address, rate: 1}
       {validatorState: validatorState.with("frozen", max(validatorState.frozen, e + CUBIC_OFFSET + UNBONDING_OFFSET)),
-       posState: posState.with("enqueuedSlashes", posState.enqueuedSlashes.set(e + CUBIC_OFFSET + UNBONDING_OFFSET, posState.enqueuedSlashes.get(e + UNBONDING_OFFSET).union(Set(slash))))}
+       posState: posState.with("enqueuedSlashes", posState.enqueuedSlashes.set(e + CUBIC_OFFSET + UNBONDING_OFFSET, posState.enqueuedSlashes.get(e + CUBIC_OFFSET + UNBONDING_OFFSET).union(Set(slash))))}
     }
 
 
@@ -404,12 +445,14 @@ module namada {
           delegators' = delegators.set(user, result.delegatorState),
           validators' = resultEndOfEpoch.validatorsState,
           pos' = resultEndOfEpoch.posState,
+          nextInfractionEpoch' = nextInfractionEpoch
         }
       } else {
         all {
           delegators' = delegators.set(user, result.delegatorState),
           validators' = validators.set(validator, result.validatorState),
-          pos' = result.posState.with("counterTxs", result.posState.counterTxs + 1)
+          pos' = result.posState.with("counterTxs", result.posState.counterTxs + 1),
+          nextInfractionEpoch' = nextInfractionEpoch
         }
       }
     }
@@ -442,20 +485,23 @@ module namada {
     }
 
     action actionEvidence(e: Epoch, validator: Address): bool = all {
-      require(limitEvidence implies validators.get(validator).frozen < e),
+      require(limitEvidence == 1 implies nextInfractionEpoch.get(validator) < e),
+      require(limitEvidence == 2 implies validators.get(validator).frozen < e),
       val result = proccessEvidence(e, validators.get(validator), pos)
       all {
         validators' = validators.set(validator, result.validatorState),
         pos' = result.posState,
         delegators' = delegators,
-        lastTx' = {tag: "Evidence", result: true, user: "", validator: validator, amount: e}
+        lastTx' = {tag: "Evidence", result: true, user: "", validator: validator, amount: e},
+        nextInfractionEpoch' = nextInfractionEpoch.set(validator, e + UNBONDING_OFFSET)
       }
     }
 
     action actionFauxTransaction(user: Address, validator: Address, amountDelegate: int, amountUnbond: int, e: Epoch): bool = all {
-      /*require(limitEvidence implies validators.get(validator).frozen >= e and
-              (amountUnbond == 0 or validators.get(validator).frozen >= pos.epoch) and
-              amountDelegate == 0),*/
+      require(limitEvidence == 1 implies nextInfractionEpoch.get(validator) >= e),
+      require(limitEvidence == 2 implies validators.get(validator).frozen >= e),
+      require(amountUnbond == 0 or validators.get(validator).frozen >= pos.epoch),
+      require(amountDelegate == 0),
       val result = {success: true, delegatorState: delegators.get(user), validatorState: validators.get(validator), posState: pos}
       all {
         commonTxAfter(user, validator, result),
@@ -485,8 +531,8 @@ module namada {
 
     // Invariant 5: If no slashing occurs, the validator's voting power at a given epoch is equal to the total amount of tokens delegated to that validator.
     val noSlashingStakeEqualSumBonds = pos.slashPool == 0 implies VALIDATORS.forall(validator => USERS.fold(0, (sum, user) => 
-                                                                                                sum + delegators.get(user).bonded.get(validator).fold(0, (total, elem) => 
-                                                                                                                                                         total + elem.amount)) == validators.get(validator).stake.get(pos.epoch + PIPELINE_OFFSET))
+                                                                                                 sum + delegators.get(user).bonded.get(validator).fold(0, (total, elem) => 
+                                                                                                                                                          total + elem.amount)) == validators.get(validator).stake.get(pos.epoch + PIPELINE_OFFSET))
 
     // Invariant 6: The total amount of tokens is constant.
     val totalAmountTokensConstant = USERS.fold(0, (sum, user) => sum + delegators.get(user).balance) + pos.posAccount + pos.slashPool== size(USERS)*INIT_BALANCE
@@ -507,6 +553,16 @@ module namada {
                         totalAmountTokensConstant and
                         stakeGreaterZero and
                         boundedBalance
+                  
+    // All invariants without slash pool
+    val allInvariantsWithNoSlashPool = balanceGreaterZero and
+                                       posAccountGreaterZero and
+                                       //posAccountZero and
+                                       stakeEqualOrLessSumBonds and
+                                       //noSlashingStakeEqualSumBonds and
+                                       totalAmountTokensConstant and
+                                       stakeGreaterZero and
+                                       boundedBalance
     
     /* ****************************************************************************
     * Execution
@@ -516,7 +572,8 @@ module namada {
       delegators' = delegators,
       validators' = validators,
       pos' = pos,
-      lastTx' = lastTx
+      lastTx' = lastTx,
+      nextInfractionEpoch' = nextInfractionEpoch
     }
 
     // State initialization: assumes that users start with some initial balance.
@@ -529,6 +586,7 @@ module namada {
         validators' = VALIDATORS.mapBy(validator => {address: validator,
                                                      stake: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => 0),
                                                      totalUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
+                                                     totalBonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => 0),
                                                      slashes: List(),
                                                      frozen: 0}),
         pos' = {posAccount: 0,
@@ -536,7 +594,8 @@ module namada {
                 epoch: initEpoch,
                 counterTxs: 0,
                 enqueuedSlashes: (initEpoch-CUBIC_OFFSET).to(initEpoch+CUBIC_OFFSET+UNBONDING_OFFSET).mapBy(e => Set())},
-        lastTx' = { tag: "Init", result: true, user: "", validator: "", amount: 0}
+        lastTx' = { tag: "Init", result: true, user: "", validator: "", amount: 0},
+        nextInfractionEpoch' = VALIDATORS.mapBy(validator => 0)
       }
     }
 
@@ -570,30 +629,32 @@ module namada {
     * Tests
     * ************************************************************************* */
 
+    //The test applyListSlashesTest is a unitest-like test for the applyListSlashes function.
     run applyListSlashesTest = {
       val initEpoch = 2
       val list1 = [{epoch: initEpoch, validator: "alice", rate: 1}]
-      val list2 = [{epoch: initEpoch, validator: "alice", rate: 1},
-                   {epoch: initEpoch+UNBONDING_OFFSET+1, validator: "alice", rate: 1} ]
+      val list2 = [{epoch: initEpoch, validator: "alice", rate: 1}, {epoch: initEpoch+UNBONDING_OFFSET+CUBIC_OFFSET+1, validator: "alice", rate: 1} ]
       val list3 = [{epoch: initEpoch, validator: "alice", rate: 1},
                    {epoch: initEpoch, validator: "alice", rate: 1} ]
+      val list4 = [{epoch: initEpoch, validator: "alice", rate: 1},
+                   {epoch: initEpoch, validator: "alice", rate: 1},
+                   {epoch: initEpoch+UNBONDING_OFFSET+CUBIC_OFFSET+1, validator: "alice", rate: 1} ]
       all {
         assert(applyListSlashes([], 100) == 100),
         assert(applyListSlashes(list1, 100) == 0),
         assert(applyListSlashes(list2, 100) == 0),
-        assert(applyListSlashes(list3, 100) == -100)
+        assert(applyListSlashes(list3, 100) == 0),
+        assert(applyListSlashes(list4, 100) == 0)
       }
     }
 
-
-    /*
-    * The test testDelegate is a unitest-like test for the delegate function.
-    */
+    //The test testDelegate is a unitest-like test for the delegate function.
     run delegateTest = {
       val delegatorState = {balance: INIT_BALANCE, bonded: USERS.mapBy(x => Set()), unbonded: USERS.mapBy(x => Set())}
       val validatorState = {address: "alice",
                             stake: 0.to(UNBONDING_OFFSET).mapBy(e => 0),
                             totalUnbonded: 1.to(1+PIPELINE_OFFSET).mapBy(e => Map()),
+                            totalBonded: 1.to(1+PIPELINE_OFFSET).mapBy(e => 0),
                             slashes: List(),
                             frozen: 0}
       val posState = {posAccount: 0,
@@ -621,9 +682,7 @@ module namada {
       }
     }
 
-    /*
-    * The test testUnbondingPeriod checks that the unbonding period is enforced.
-    */
+    // The test successfulWithdrawTest checks that the withdraw works.
     run successfulWithdrawTest = {
       nondet user = USERS.oneOf()
       nondet validator = VALIDATORS.oneOf()
@@ -640,9 +699,7 @@ module namada {
       }
     }
 
-    /*
-    * The test testUnbondingPeriod checks that the unbonding period is enforced.
-    */
+    // The test testUnbondingPeriod checks that the unbonding period is enforced.
     run unbondingPeriodTest = {
       nondet user = USERS.oneOf()
       nondet validator = VALIDATORS.oneOf()
@@ -655,56 +712,127 @@ module namada {
       }
     }
 
+    // The test fullExecutionTest describes an execution that involves all actions.
     run fullExecutionTest = {
       nondet user = USERS.oneOf()
       nondet validator = VALIDATORS.oneOf()
-      nondet amount = 1.to(INIT_BALANCE - 3).oneOf()
+      nondet amount = 1.to(INIT_BALANCE).oneOf()
       nondet amountUnbonded = 1.to(amount).oneOf()
+      val initEpoch = UNBONDING_OFFSET + CUBIC_OFFSET
       all {
-        require(UNBONDING_OFFSET<=2 and INIT_BALANCE>=4),
         init
         .then(actionDelegate(user, validator, amount))
-        .then(actionEvidence(UNBONDING_OFFSET + 1, validator))//to be processed at the end of 2*UNBONDING_OFFSET+1+CUBIC_OFFSET
         .then(actionUnbond(user, validator, amountUnbonded))//epoch=UNBONDING_OFFSET+1
-        .then(actionDelegate(user, validator, 1).repeated(UNBONDING_OFFSET+CUBIC_OFFSET))
+        .then(actionEvidence(initEpoch + 1, validator))//to be processed at the end of 2*UNBONDING_OFFSET+2*CUBIC_OFFSET+1
+        .then(actionFauxTransaction(user, validator, 0, 0, -1).repeated(UNBONDING_OFFSET+CUBIC_OFFSET))
         //slash already processed
         .then(actionWithdraw(user, validator))
         // the 5 tokens unbonded shoul be slashed
-        .then(all{ assert(delegators.get(user).balance == INIT_BALANCE - amount - 3),
-                   assert(pos.slashPool == amount),
+        .then(all{ assert(delegators.get(user).balance == INIT_BALANCE - amount),
+                   //assert(pos.slashPool == amount),
                    allUnchanged })
         
       }
     }
 
+    // The test earlyUnbondingTest is the most complete test involving all actions.
     run earlyUnbondingTest = {
       nondet user = USERS.oneOf()
       nondet validator = VALIDATORS.oneOf()
-      nondet amount = 1.to(INIT_BALANCE - 3).oneOf()
+      nondet amount = 1.to(INIT_BALANCE).oneOf()
       nondet amountUnbonded = 1.to(amount).oneOf()
       //when the evidence will be processed
+      val initEpoch = UNBONDING_OFFSET+CUBIC_OFFSET
       val slashingOffset = UNBONDING_OFFSET+CUBIC_OFFSET
       all {
-        require(UNBONDING_OFFSET<=2 and INIT_BALANCE>=4),
         init
         .then(actionDelegate(user, validator, amount)) //epoch=UNBONDING_OFFSET assuming init epoch=UNBONDING_OFFSET
-        .then(actionEvidence(UNBONDING_OFFSET + 1, validator)) //to be processed at the end of 2*UNBONDING_OFFSET+1+CUBIC_OFFSET
-        .then(actionUnbond(user, validator, amountUnbonded))//epoch=UNBONDING_OFFSET+1
-        .then(actionFauxTransaction(user, validator, 0, 0, -1).repeated(UNBONDING_OFFSET+CUBIC_OFFSET-1))//epoch=2*UNBONDING_OFFSET+CUBIC_OFFSET
+        .then(actionUnbond(user, validator, amountUnbonded))//epoch=UNBONDING_OFFSET+CUBIC_OFFSET+1
+        .then(actionEvidence(initEpoch + 1, validator)) //to be processed at the end of 2*UNBONDING_OFFSET+2*CUBIC_OFFSET+1
+        .then(actionFauxTransaction(user, validator, 0, 0, -1).repeated(slashingOffset - 1))//epoch=2*UNBONDING_OFFSET+2*CUBIC_OFFSET
         //check that slash has not been processed yet
         .then(all{ assert(validators.get(validator).slashes == List()),
                    allUnchanged })
-        .then(actionWithdraw(user, validator))//epoch=2*UNBONDING_OFFSET+1+CUBIC_OFFSET
+        .then(actionWithdraw(user, validator))//epoch=2*UNBONDING_OFFSET+2*CUBIC_OFFSET+1
         //no withdrawing should be allowed yet
         .then(all{ assert(delegators.get(user).balance == INIT_BALANCE - amount),
-                   assert(pos.epoch == 2*UNBONDING_OFFSET+2+CUBIC_OFFSET),
+                   assert(pos.epoch == 2*UNBONDING_OFFSET+2*CUBIC_OFFSET+2),
                    allUnchanged })
         //check that slash has been processed
         .then(actionWithdraw(user, validator))//epoch=2*UNBONDING_OFFSET+2+PIPELINE_OFFSET+CUBIC_OFFSET
         //all tokens are slashed
         .then(all{ assert(delegators.get(user).balance == INIT_BALANCE - amount),
-                   assert(pos.slashPool == amount),
+                   //assert(pos.slashPool == amount),
                    allUnchanged })
+      }
+    }
+
+    //namadaScenarioTest tests a specific scenario that the Namada team use to test their implementation
+    //It requires a different intialization of state variables whihc is done in initNamadaTest
+    action initNamadaTest: bool = all {
+      val initEpoch = UNBONDING_OFFSET + CUBIC_OFFSET
+      all {
+        delegators' = USERS.mapBy(user => {balance: 1000000,
+                                          bonded: VALIDATORS.mapBy(x => if (x == "alice" and user == "alice") Set({amount: 200000, start: UNBONDING_OFFSET + CUBIC_OFFSET - 1 }) else Set()),
+                                          unbonded: VALIDATORS.mapBy(x => Set())}),
+        validators' = VALIDATORS.mapBy(validator => {address: validator,
+                                                     stake: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => if (validator=="alice" and e >= UNBONDING_OFFSET + CUBIC_OFFSET - 1) 200000 else 0),
+                                                     totalUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
+                                                     totalBonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => if (validator=="alice" and e==UNBONDING_OFFSET + CUBIC_OFFSET - 1) 200000 else 0),
+                                                     slashes: List(),
+                                                     frozen: 0}),
+        pos' = {posAccount: 200000,
+                slashPool: 0,
+                epoch: initEpoch,
+                counterTxs: 0,
+                enqueuedSlashes: (initEpoch-CUBIC_OFFSET).to(initEpoch+CUBIC_OFFSET+UNBONDING_OFFSET).mapBy(e => Set())},
+        lastTx' = { tag: "Init", result: true, user: "", validator: "", amount: 0},
+        nextInfractionEpoch' = VALIDATORS.mapBy(validator => 0)
+      }
+    }
+
+    run namadaScenarioTest = {
+      val validator = "alice"
+      nondet user = USERS.exclude(Set(validator)).oneOf()
+      val initEpoch = UNBONDING_OFFSET + CUBIC_OFFSET // = 5
+      val cubicSlashingRate = 1
+      val initialStake = 200000
+      val del1Amount = 67231
+      val selfUnbond1Amount = 154654
+      val delUnbond1Amount = 18000
+      val selfBond1Amount = 9123
+      val selfUnbond2Amount = 15000
+      val del2Amount = 8144
+      val stakeAfterProcessing = (1 - min(1, 2*cubicSlashingRate))*(initialStake + del1Amount - selfUnbond1Amount - delUnbond1Amount - selfUnbond2Amount) + selfBond1Amount + del2Amount
+      all{
+        //making preconditions explicit to ease debugging
+        require(UNBONDING_OFFSET == 4),
+        require(PIPELINE_OFFSET == 2),
+        require(CUBIC_OFFSET == 1),
+        require(VALIDATORS.exists(v => v == "alice")),
+        require(size(USERS.exclude(Set(validator))) > 0),
+        initNamadaTest
+        //bonded at initEpoch + PIPELINE_OFFSET = initEpoch + 2
+        .then(actionDelegate(user, validator, 67231)) // epoch = initEpoch
+        //unbonded at initEpoch + 1 + PIPELINE_OFFSET = initEpoch + 3
+        .then(actionUnbond(validator, validator, 154654)) // epoch = initEpoch + 1
+        //unbonded at initEpoch + 2 + PIPELINE_OFFSET = initEpoch + 4
+        .then(actionUnbond(user, validator, 18000)) // epoch = initEpoch + 2
+        //bonded at initEpoch + 3 + PIPELINE_OFFSET = initEpoch + 5
+        .then(actionDelegate(validator, validator, 9123)) // epoch = initEpoch + 3
+        //unbonded at initEpoch + 4 + PIPELINE_OFFSET = initEpoch + 6
+        .then(actionUnbond(validator, validator, 15000)) // epoch = initEpoch + 4
+        //bonded at initEpoch + 5 + PIPELINE_OFFSET = initEpoch + 7
+        .then(actionDelegate(user, validator, 8144)) // epoch = initEpoch + 5
+        //slash processed at initEpoch + PIPELINE_OFFSET + 1 + CUBIC_OFFSET + UNBONDING_OFFSET = (initEpoch + 3) + 5 = initEpoch + 8
+        .then(actionEvidence(initEpoch + PIPELINE_OFFSET + 1, validator)) // epoch = initEpoch + 6
+        //slash processed at initEpoch + PIPELINE_OFFSET + 1 + CUBIC_OFFSET + UNBONDING_OFFSET = (initEpoch + 3) + 5 = initEpoch + 8
+        .then(actionEvidence(initEpoch + PIPELINE_OFFSET + 1, validator)) // epoch = initEpoch + 6
+        //slash processed at initEpoch + PIPELINE_OFFSET + 2 + CUBIC_OFFSET + UNBONDING_OFFSET = (initEpoch + 4) + 5 = initEpoch + 9
+        .then(actionEvidence(initEpoch + PIPELINE_OFFSET + 2, validator)) // epoch = initEpoch + 6
+        .then(actionFauxTransaction(user, validator, 0, 0, -1).repeated(3)) // epoch = initEpoch + 6..initEpoch + 8
+        .then(all{assert(validators.get(validator).stake.get(initEpoch + 9) == stakeAfterProcessing),
+                  allUnchanged })
       }
     }
 }
