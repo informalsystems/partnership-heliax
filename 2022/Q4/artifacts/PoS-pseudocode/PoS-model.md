@@ -577,7 +577,7 @@ end_of_epoch()
       
       var validator_stake = read_epoched_field(validators[validator_address].total_deltas, cur_epoch + offset, 0)
       var slashable_stake = validator_stake - sum_post_bonds
-      var change = min{-slashable_stake, diff_slashed_amount}
+      var change = max{-slashable_stake, diff_slashed_amount}
       update_total_deltas(validator_address, offset, change)
       update_voting_power(validator_address, offset)
 
