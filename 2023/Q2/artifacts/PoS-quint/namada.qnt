@@ -187,7 +187,7 @@ module namada {
       if (amount <= delegatorState.balance and amount > 0) {
         val updatedDelegatorState = delegatorState.with("balance", delegatorState.balance - amount)
                                                   .with("bonded", delegatorState.bonded.set(validatorState.address,
-                                                                                            delegatorState.bonded.get(validatorState.address).setAdd({start: posState.epoch + PIPELINE_OFFSET, amount: amount})))                                                                       
+                                                                                            delegatorState.bonded.get(validatorState.address).setAdd({start: posState.epoch + PIPELINE_OFFSET, amount: amount}))) // is this always adding a new bond element rather than updating? maybe this doesn't matter if only 1 tx is permitted, but from a spec perspective not sure if this is incorrect.                                                                       
         val updatedValidatorState = validatorState.with("stake", validatorState.stake.set(posState.epoch + PIPELINE_OFFSET,
                                                                                           validatorState.stake.get(posState.epoch + PIPELINE_OFFSET) + amount))
                                                   .with("totalBonded", validatorState.totalBonded.set(posState.epoch + PIPELINE_OFFSET,
