@@ -493,7 +493,7 @@ module namada {
         pos' = result.posState,
         delegators' = delegators,
         lastTx' = {tag: "Evidence", result: true, user: "", validator: validator, amount: e},
-        nextInfractionEpoch' = nextInfractionEpoch.set(validator, e + UNBONDING_OFFSET)
+        nextInfractionEpoch' = nextInfractionEpoch.set(validator, e + UNBONDING_OFFSET) // should this have CUBIC_OFFSET?
       }
     }
 
