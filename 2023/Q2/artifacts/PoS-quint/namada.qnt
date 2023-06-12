@@ -33,7 +33,7 @@ module namada {
     type Unbond = {
       // Epoch at which the unbond tokens started contributing to the validator's stake
       start: Epoch,
-      // Epoch at which the unbonded toeksn can be withdrawn
+      // Epoch at which the unbonded tokens can be withdrawn
       end: Epoch,
       // Amount of unbonded tokens
       amount: int
@@ -69,14 +69,14 @@ module namada {
       slashes: List[Slash],
       // Keeps tracks of the epoch until which a validator is frozen
       frozen: Epoch,
-      // Each validator keeps track of unbonded tokens per epoch
-      // totalUnbonded is a map from unbonding epoch to unbonded bonds
-      // The unbonded bonds are tracked in a map from bond starting epoch to amount of tokens
+      // Each validator keeps track of unbonded tokens per epoch.
+      // totalUnbonded is a map from unbonding epoch (the epoch at which the unbonded tokens stop contributing to the stake) to unbonded bonds.
+      // The unbonded bonds are tracked in a map from bond starting epoch to amount of tokens.
       totalUnbonded: Epoch -> Epoch -> int,
-      // Each validatro keeps track of bonded tokens per epoch
-      // totalBonded is a map from bond starting epoch to amount of bonded tokens
-      // It is used an the en of en epoch to compute how many tokens have been delegated
-      // to a validator after a given infraction epoch
+      // Each validator keeps track of bonded tokens per epoch.
+      // totalBonded is a map from bond starting epoch to amount of bonded tokens.
+      // It is used at the end of an epoch to compute how many tokens have been delegated
+      // to a validator after a given infraction epoch.
       totalBonded: Epoch -> int
     }
 
@@ -199,7 +199,7 @@ module namada {
       }
     }
 
-    // The function unbonds a bond record contraint to a maximum amount (acc.remainder).
+    // The function unbonds a bond record contrained to a maximum amount (acc.remainder).
     // - @param acc a record with three fields:
     //   - remainder: the maximum amount of tokens to be unbonded.
     //   - toRemove: a set of bond records which includes the set of bond records that have been unbonded so far.
@@ -216,7 +216,7 @@ module namada {
 
     // It iterates over a set of bond records until a given amount of tokens is unbonded. For each iterated bond,
     // the function calls unbondBond while there are still tokens to be unbonded.
-    // - @param bonds a set a bond records that can be unbonded.
+    // - @param bonds a set of bond records that can be unbonded.
     // - @param amount the amount of tokens that have to be unbonded.
     // - @returns a record with two fields: toRemove a set of bond records that have been unbonded and new a bond record
     //   that either contains a bond record if a bond has been partially unbonded or a bond record with start epoch equal to -1
@@ -362,7 +362,7 @@ module namada {
       result._3
     }
 
-    // Returns the slahs rate depending of the type of infraction
+    // Returns the slash rate depending of the type of infraction
     pure def minSlashRate(infraction: str): Dec = {
       if (infraction == "duplicate_vote") DUPLICATE_RATE else LIGHT_RATE
     }
