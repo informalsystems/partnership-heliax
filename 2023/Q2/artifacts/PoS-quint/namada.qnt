@@ -31,6 +31,16 @@ module namada {
       rate: int
     }
 
+    // Enqueued infraction record
+    type Infraction = {
+      // Unique identifier
+      id: int,
+      // Misbehaving epoch
+      epoch: epoch,
+      // Misbehaving validator
+      validator: Address,
+    }
+
     // Delegator state
     type DelegatorState = {
       // User's current balance
@@ -74,8 +84,10 @@ module namada {
       epoch: Epoch,
       // Number of transactions executed in the current epoch
       counterTxs: int,
+      // Number of infractions submitted at the current epoch
+      counterInfractions: int,
       // A map from epoch to the set of slashes scheduled to be processed
-      enqueuedSlashes: Epoch -> Set[Slash],
+      enqueuedSlashes: Epoch -> Set[Infraction],
     }
 
     // Result record returned by any of the three PoS functions: delegate, unbond and withdraw
@@ -373,7 +385,7 @@ module namada {
     // Computes a slash rate based on a set of slashes
     // - @param setSlashes a set of slashes
     // - @returns an integer represting the slash rate
-    pure def computeFinalRate(setSlashes: Set[Slash]): int = {
+    pure def computeFinalRate(setInfractions: Set[Infraction]): int = {
       1
     } 
 
@@ -411,6 +423,7 @@ module namada {
       //val totalAmountSlashed = slashPerValidator.keys().fold(0, (sum, validator) => sum + validatorsState.get(validator).stake.get(infractionEpoch)*slashPerValidator.get(validator))
       val updatedPos =  posState.with("epoch", curEpoch + 1)
                                 .with("counterTxs", 0)
+                                .with("counterInfractions", 0)
                                 //.with("posAccount", posState.posAccount - totalAmountSlashed)
                                 //.with("slashPool", posState.slashPool + totalAmountSlashed)
                                 .with("enqueuedSlashes", (curEpoch-CUBIC_OFFSET+1).to(curEpoch+1+CUBIC_OFFSET+UNBONDING_OFFSET).mapBy(e => if (e < curEpoch+1+CUBIC_OFFSET+UNBONDING_OFFSET) posState.enqueuedSlashes.get(e)
@@ -424,9 +437,11 @@ module namada {
     // 3. It finally enqueues the slash and schedules it to be proccessed at the end of the epoch resulting from adding UNBONDING_OFFSET
     // to the misbehaving epoch. 
     pure def proccessEvidence(e: Epoch, validatorState: ValidatorState, posState: PosState): {validatorState: ValidatorState, posState: PosState} = {
-      val slash = {epoch: e, validator: validatorState.address, rate: 1}
+      val id = posState.counterInfractions + 1
+      val infraction = {id: id, epoch: e, validator: validatorState.address}
       {validatorState: validatorState.with("frozen", max(validatorState.frozen, e + CUBIC_OFFSET + UNBONDING_OFFSET)),
-       posState: posState.with("enqueuedSlashes", posState.enqueuedSlashes.set(e + CUBIC_OFFSET + UNBONDING_OFFSET, posState.enqueuedSlashes.get(e + CUBIC_OFFSET + UNBONDING_OFFSET).union(Set(slash))))}
+       posState: posState.with("enqueuedSlashes", posState.enqueuedSlashes.set(e + CUBIC_OFFSET + UNBONDING_OFFSET, posState.enqueuedSlashes.get(e + CUBIC_OFFSET + UNBONDING_OFFSET).union(Set(infraction))))
+                         .with("counterInfractions", id)}
     }
 
 
@@ -591,6 +606,7 @@ module namada {
                 slashPool: 0,
                 epoch: initEpoch,
                 counterTxs: 0,
+                counterInfractions: 0,
                 enqueuedSlashes: (initEpoch-CUBIC_OFFSET).to(initEpoch+CUBIC_OFFSET+UNBONDING_OFFSET).mapBy(e => Set())},
         lastTx' = { tag: "Init", result: true, user: "", validator: "", amount: 0},
         nextInfractionEpoch' = VALIDATORS.mapBy(validator => 0)
@@ -659,6 +675,7 @@ module namada {
                       slashPool: 0,
                       epoch: 1,
                       counterTxs: 0,
+                      counterInfractions: 0,
                       enqueuedSlashes: 0.to(UNBONDING_OFFSET).mapBy(e => Set())}
       nondet amount = 0.to(MAX_UINT).oneOf()
       val result = delegate(delegatorState, validatorState, posState, amount)
@@ -783,6 +800,7 @@ module namada {
                 slashPool: 0,
                 epoch: initEpoch,
                 counterTxs: 0,
+                counterInfractions: 0,
                 enqueuedSlashes: (initEpoch-CUBIC_OFFSET).to(initEpoch+CUBIC_OFFSET+UNBONDING_OFFSET).mapBy(e => Set())},
         lastTx' = { tag: "Init", result: true, user: "", validator: "", amount: 0},
         nextInfractionEpoch' = VALIDATORS.mapBy(validator => 0)
