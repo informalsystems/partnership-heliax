@@ -35,9 +35,11 @@ module namada {
     type DelegatorState = {
       // User's current balance
       balance: int,
-      // User's bonds: a map from validator to set of bonds
+      // User's bonds: a map from validator to a map storing the tokens that the user has currently delegated to the validator
+      // The latter maps bond starting epoch to amount of tokens
       bonded: Address -> Epoch -> int,
-      // User's unbonds: a map from validator to set of unbonds
+      // User's unbonds: a map from validator to a map storing the tokens that the user has unbonded (not yet withdrawn) from the validator
+      // The latter maps the pair bond starting epoch and unbond ending epoch to amount of tokens
       unbonded: Address -> (Epoch, Epoch) -> int
     }
 
@@ -160,6 +162,13 @@ module namada {
     * Main functions
     * ************************************************************************* */
 
+
+    // The function addBond adds a bond to a map of bonds. If there is an existing bond with the same 
+    // starting epoch, then the function simply adds the amount of toekns of the bond to add to tyhe existing entry
+    // - @param bonds a map of bonds
+    // - @param start the starting epoch of the bond to add 
+    // - @param amount the amount of tokens of the bond to add
+    // - @returns a map of bonds accounting for the new bond
     pure def addBond(bonds: Epoch -> int, start: Epoch, amount: int): Epoch -> int = {
       if (bonds.has(start)) bonds.set(start, bonds.get(start) + amount)
       else bonds.mapSafeSet(start, amount)
@@ -168,7 +177,7 @@ module namada {
     // The function delegate is called when a user wants to delegate tokens to a validator.
     // 1. It first checks that the user has enough tokens in its account.
     // 2. Then it locks those tokens by transferring them from the user's account to the PoS special account.
-    // 3. It records that the user has delegated amount tokens to the validator by creating a bond record.
+    // 3. It records that the user has delegated amount tokens to the validator.
     // 4. It increases the validator's stake at the PIPELINE_OFFSET and updates the totalBonded variable.
     pure def delegate(delegatorState: DelegatorState, validatorState: ValidatorState, posState: PosState, amount: int): ResultTx = {
       if (amount <= delegatorState.balance and amount > 0) {
@@ -201,12 +210,12 @@ module namada {
        toRemove: acc.toRemove.setAdd(bond.start),
        new: if (bond.amount > acc.remainder) {start: bond.start, amount: bond.amount - acc.remainder} else acc.new}
 
-    // It iterates over a set of bond records until a given amount of tokens is unbonded. For each iterated bond,
+    // It iterates over a map of bonds in decreasing starting epoch order until a given amount of tokens is unbonded. For each iterated bond,
     // the function calls unbondBond while there are still tokens to be unbonded.
-    // - @param bonds a set a bond records that can be unbonded.
+    // - @param bonds a map of bonds that can be unbonded.
     // - @param amount the amount of tokens that have to be unbonded.
-    // - @returns a record with two fields: toRemove a set of bond records that have been unbonded and new a bond record
-    //   that either contains a bond record if a bond has been partially unbonded or a bond record with start epoch equal to -1
+    // - @returns a record with two fields: toRemove the set of bonds starting epochs of the bonds that have been unbonded and a new bond 
+    //   that either contains a bond record (starting epoch and amount) if a bond has been partially unbonded or a bond record with start epoch equal to -1
     //   otherwise.
     pure def iterateBondsUpToAmount(bonds: Epoch -> int, amount: int): {toRemove: Set[Epoch], new: {start: int, amount: int}} = {
       val setEpochs = sortSetDecreasing(bonds.keys())
@@ -258,10 +267,11 @@ module namada {
         // Compute the updated delegators bonded variable by removing the unbonded bonds and adding a new bond in case one was partially unbonded                                                     
         val updatedBonded = if (resultUnbonding.new.start == -1) bonds.mapRemoveSet(resultUnbonding.toRemove)
                             else bonds.mapRemoveSet(resultUnbonding.toRemove).mapSafeSet(resultUnbonding.new.start, resultUnbonding.new.amount)
+        // Compute the set of unbond records that have to be recorded out of the set of unbonded bonds computed at the previous step
         val newUnbonds = tuples(resultUnbonding.toRemove, Set(endEpoch)).mapBy(unbondKey => val start = unbondKey._1
                                                                                             if (start == resultUnbonding.new.start) bonds.get(start) - resultUnbonding.new.amount
                                                                                             else bonds.get(start))
-        // Compute the set of unbond records that have to be recorded out of the set of unbonded bonds computed at the previous step
+        // Compute the updated delegators unbonded variable by adding the new unbonds                                                                                                                                 
         val updatedUnbonded = delegatorState.unbonded.get(validatorState.address).mapAddSet(newUnbonds)
         // Compute the updated delegator's state
         val updatedDelegatorState = delegatorState.with("bonded", delegatorState.bonded.set(validatorState.address, updatedBonded))
@@ -286,9 +296,9 @@ module namada {
     }
 
     // The function withdraw is called when a user wants to withdraw tokens from a validator.
-    // 1. First it computes the amount of tokens that can be withdrawn and returns an error in case there are none.
+    // 1. First it computes whether there are tokens ready to be withdrawn and returns an error in case there are none.
     // 2. Then records that those tokens are withdrawn by removing the withdrawable unbond records from unbonded.
-    // 3. Finally, it unlocks the tokens by transferring them from the PoS special account to the user's account.
+    // 3. Finally, it unlocks the tokens by transferring them from the PoS special account to the user's account, after slashing them.
     pure def withdraw(delegatorState: DelegatorState, validatorState: ValidatorState, posState: PosState): ResultTx = {
       val unbonds = delegatorState.unbonded.get(validatorState.address)
       // Filter the the set of unbonds that can be withdrawn
@@ -424,13 +434,10 @@ module namada {
     * Actions
     * ************************************************************************* */
 
-    /*
-    * The action commonTxAfter is called after a transaction is executed.
-    * 1. It first checks if it is the last transaction of the current epoch.
-    * 2. If it is the last transaction of the epoch, it calls the endOfEpoch function.
-    * 3. Otherwise, it updates the variables using the result of the transaciton and increases counterTxs.
-    */
-
+    // The action commonTxAfter is called after a transaction is executed.
+    // 1. It first checks if it is the last transaction of the current epoch.
+    // 2. If it is the last transaction of the epoch, it calls the endOfEpoch function.
+    // 3. Otherwise, it updates the variables using the result of the transaciton and increases counterTxs.
     action commonTxAfter(user: Address, validator: Address, result: ResultTx): bool = all {
       if (pos.counterTxs + 1 == TXS_EPOCH) {
         val resultEndOfEpoch = endOfEpoch(validators.set(validator, result.validatorState), result.posState, pos.epoch)
