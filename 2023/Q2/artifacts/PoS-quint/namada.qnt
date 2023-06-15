@@ -21,24 +21,6 @@ module namada {
     // Represent epochs as integers
     type Epoch = int
 
-    // Bond record to record the bond starting epoch
-    type Bond = {
-      // Epoch at which the bond start contributing to the validator's stake
-      start: Epoch,
-      // Amount of bonded tokens
-      amount: int
-    }
-
-    // Unbond record to record when the associated bond started and the unbonding epoch
-    type Unbond = {
-      // Epoch at which the unbond tokens started contributing to the validator's stake
-      start: Epoch,
-      // Epoch at which the unbonded toeksn can be withdrawn
-      end: Epoch,
-      // Amount of unbonded tokens
-      amount: int
-    }
-
     // Slash record
     type Slash = {
       // Misbehaving epoch
@@ -213,7 +195,7 @@ module namada {
     // - @returns an update acc record: subtracts the minimum between bond.amount and acc.remainder from acc.remainder; adds the bond to acc.toRemove;
     // and if bond.amount if gretaer than acc.remainder (meaning that the bond is only partially unbonded), creates a new bond record in acc.new
     // of bond.amount - acc.remainder tokens.
-    pure def unbondBond(acc: {remainder: int, toRemove: Set[Epoch], new: Bond}, bond: Bond): {remainder: int, toRemove: Set[Epoch], new: Bond} = 
+    pure def unbondBond(acc: {remainder: int, toRemove: Set[Epoch], new: {start: int, amount: int}}, bond: {start: int, amount: int}): {remainder: int, toRemove: Set[Epoch], new: {start: int, amount: int}} = 
       val amountUnbonded = min(bond.amount, acc.remainder)
       {remainder: acc.remainder - amountUnbonded,
        toRemove: acc.toRemove.setAdd(bond.start),
@@ -226,7 +208,7 @@ module namada {
     // - @returns a record with two fields: toRemove a set of bond records that have been unbonded and new a bond record
     //   that either contains a bond record if a bond has been partially unbonded or a bond record with start epoch equal to -1
     //   otherwise.
-    pure def iterateBondsUpToAmount(bonds: Epoch -> int, amount: int): {toRemove: Set[Epoch], new: Bond} = {
+    pure def iterateBondsUpToAmount(bonds: Epoch -> int, amount: int): {toRemove: Set[Epoch], new: {start: int, amount: int}} = {
       val setEpochs = sortSetDecreasing(bonds.keys())
       val result = setEpochs.foldl({remainder: amount, toRemove: Set(), new: {start: -1, amount: 0}},
                                    (acc, e) => if (acc.remainder == 0) acc else unbondBond(acc, {start: e, amount: bonds.get(e)}))
