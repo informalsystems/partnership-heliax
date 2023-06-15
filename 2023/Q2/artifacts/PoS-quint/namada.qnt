@@ -158,7 +158,7 @@ module namada {
 
     // Used to guarantee every step produces a state transition
     // IMPORTANT: Set to false for tests
-    pure val enforceStateTransition = true
+    pure val enforceStateTransition = false
 
     // Last transaction executed by step.
     // Amount is over used by the actions:
@@ -705,11 +705,9 @@ module namada {
         init
         .then(actionDelegate(user, validator, 10))
         .then(actionUnbond(user, validator, 5))
-        .then(actionDelegate(user, validator, 1))
-        .then(actionDelegate(user, validator, 1))
-        .then(actionDelegate(user, validator, 1))
+        .then(actionFauxTransaction(user, validator, 0, 0, -1).repeated(UNBONDING_OFFSET+PIPELINE_OFFSET+CUBIC_OFFSET))
         .then(actionWithdraw(user, validator))
-        .then(all{ assert(delegators.get(user).balance == 12), allUnchanged})
+        .then(all{ assert(delegators.get(user).balance == 15), allUnchanged})
         
       }
     }
@@ -819,7 +817,7 @@ module namada {
       val selfBond1Amount = 9123
       val selfUnbond2Amount = 15000
       val del2Amount = 8144
-      val stakeAfterProcessing = (1 - min(1, 2*cubicSlashingRate))*(initialStake + del1Amount - selfUnbond1Amount - delUnbond1Amount - selfUnbond2Amount) + selfBond1Amount + del2Amount
+      val stakeAfterProcessing = (1 - min(1, 2*cubicSlashingRate))*(initialStake + del1Amount - selfUnbond1Amount - delUnbond1Amount - selfUnbond2Amount + selfBond1Amount) + del2Amount
       all{
         //making preconditions explicit to ease debugging
         require(UNBONDING_OFFSET == 4),
