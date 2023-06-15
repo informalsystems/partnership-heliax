@@ -154,7 +154,7 @@ module namada {
     // 0: no limit
     // 1: limited but it allows multiple infractions with the same stake
     // 2: disallow multiple infractions with the same stake
-    pure val limitEvidence = 1
+    pure val limitEvidence = 0
 
     // Used to guarantee every step produces a state transition
     // IMPORTANT: Set to false for tests
