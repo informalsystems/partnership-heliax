@@ -94,7 +94,7 @@ module extraSpells {
     assert(Map(2 -> 3, 4 -> 5).mapSafeSet(2, 7) == Map(2 -> 7, 4 -> 5))
   }
 
-  /// Remove a set of map entries.
+  /// Remove a set of map entries. 
   ///
   /// - @param __map a map to remove the set of entries from
   /// - @param __keys the set of keys to remove
