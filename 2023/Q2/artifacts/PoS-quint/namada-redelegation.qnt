@@ -85,7 +85,8 @@ module namada {
       // It is used an the en of en epoch to compute how many tokens have been delegated
       // to a validator after a given infraction epoch
       totalBonded: Epoch -> int,
-      incomingRedelegations: Address -> initEpoch
+      incomingRedelegations: Address -> Epoch,
+      outgoingRedelegations: Address -> (Epoch, Epoch) -> int
     }
 
     // Proof-of-stake system state
@@ -115,8 +116,7 @@ module namada {
     // Result record returned by any of the unbond function
     type ResultUnbondTx = {
       result: ResultTx,
-      amount: int,
-      redelegatedUnbonds:  Epoch -> RedelegatedBondsMap,
+      resultSlashing: {sum: int, epochMap: Epoch -> int}
     }
 
     // Result record returned by the redelegation PoS function
@@ -317,6 +317,18 @@ module namada {
                                                                                                                             else redelegatedBonds.get(start).get(src).get(bondStart) - modified.newAmount)))
     }
 
+    pure def mergeBondsMap(map1: Epoch -> int, map2: Epoch -> int): Epoch -> int = {
+      map1.keys().union(map2.keys()).mapBy(e => if (map1.has(e) and map2.has(e)) map1.get(e) + map2.get(e)
+                                                else if (map1.has(e)) map1.get(e) else map2.get(e))
+
+    }
+
+    pure def mergeRedelegatedBondsMap(map1: RedelegatedBondsMap, map2: RedelegatedBondsMap): RedelegatedBondsMap = {
+      map1.keys().union(map2.keys()).mapBy(src => if (map1.has(src) and map2.has(src)) mergeBondsMap( map1.get(src), map2.get(src))
+                                                  else if (map1.has(src)) map1.get(src) else map2.get(src))
+
+    }
+
     // It updates a map of redelegated bonds with a modified bond.
     // - @param redelegatedBonds a map of redelegated bonds.
     // - @param modified a ModifiedRedelegation record that represents a redelegated bond that it is only partially unbonded.
@@ -331,20 +343,31 @@ module namada {
       }
     }
 
+    // It adds to an existing entry of the redelegated unbonded variable a set of redelegated unbonds.
+    // - @param existing an entry of the total redelegated unbonded variable
+    // - @param redelegatedUnbonds a set of redelegated unbonds.
+    // - @param end an epoch at which the unbonds are withdrawable
+    // - @returns an entry of the redelegated unbonded variable including the new unbonds.
+    pure def updateRedelegatedUnbonded(existing: (Epoch, Epoch) -> RedelegatedBondsMap, redelegatedUnbonds: Epoch -> RedelegatedBondsMap, end: Epoch): (Epoch, Epoch) -> RedelegatedBondsMap = {
+      val newTuples =  tuples(redelegatedUnbonds.keys(), Set(end))
+      val existingTuples = existing.keys()
+      existingTuples.union(newTuples).mapBy(pair => val start = pair._1
+                                                    if (pair.in(existingTuples) and pair.in(newTuples)) mergeRedelegatedBondsMap(existing.get(pair), redelegatedUnbonds.get(start))
+                                                    else if (pair.in(existingTuples)) existing.get(pair) else redelegatedUnbonds.get(start))
+    }
+
     // It adds to an existing entry of the total redelegated unbonded variable a set of redelegated unbonds.
     // - @param existing an entry of the total redelegated unbonded variable
     // - @param redelegatedUnbonds a set of redelegated unbonds.
     // - @returns an entry of the total redelegated unbonded variable including the new unbonds.
-    pure def mergeTotalRedelegatedUnbonded(existing: (Epoch, Address) -> Epoch -> int, redelegatedUnbonds: Epoch -> RedelegatedBondsMap): (Epoch, Address) -> Epoch -> int = {
+    pure def updateTotalRedelegatedUnbonded(existing: (Epoch, Address) -> Epoch -> int, redelegatedUnbonds: Epoch -> RedelegatedBondsMap): (Epoch, Address) -> Epoch -> int = {
       val newTuples =  redelegatedUnbonds.keys().fold(Set(), (acc, e) => acc.union(tuples(Set(e), redelegatedUnbonds.get(e).keys())))
       existing.keys().union(newTuples).mapBy(pair => val start = pair._1
                                                      val srcValidator = pair._2 
-                                                     if (pair.in(newTuples)) {
-                                                       val newKeys = redelegatedUnbonds.get(start).get(srcValidator).keys()
-                                                       existing.getOrElse(pair, Map()).keys().union(newKeys).mapBy(bondStart => if (bondStart.in(newKeys)) existing.get(pair).getOrElse(bondStart, 0) + redelegatedUnbonds.get(start).get(srcValidator).get(bondStart)
-                                                                                                                                else existing.get(pair).get(bondStart))  
-                                                     } else existing.get(pair))
+                                                     if (existing.has(pair) and pair.in(newTuples)) mergeBondsMap(existing.get(pair), redelegatedUnbonds.get(start).get(srcValidator))
+                                                     else if (existing.has(pair)) existing.get(pair) else redelegatedUnbonds.get(start).get(srcValidator))
     }
+
     // Computes how much remains from an amount of tokens after applying a slash given that a set of slashes may have been
     // previously applied.
     // - @param slash the slash record to be applied.
@@ -404,22 +427,28 @@ module namada {
       }
     }
     
-    pure def foldRedelegatedBonds(bonds: RedelegatedBondsMap, listSlashes: List[Slash], slashes: Address -> List[Slash]): {totalRedelegated: int, totalAfterSlashing: int} = {
+    pure def foldRedelegatedBonds(bonds: RedelegatedBondsMap, start: Epoch, listSlashes: List[Slash], slashes: Address -> List[Slash]): {totalRedelegated: int, totalAfterSlashing: int} = {
       bonds.keys().fold({totalRedelegated: 0, totalAfterSlashing: 0},
                         (accSrc, src) => bonds.get(src).keys().fold(accSrc,
-                                                                    (accEpoch, e) => val mergedList = mergeListSlashes(listSlashes, slashes.get(src).select(slash => e <= slash.epoch))
+                                                                    (accEpoch, e) => val selectList = slashes.get(src).select(slash => start - PIPELINE_OFFSET - UNBONDING_OFFSET <= slash.epoch and
+                                                                                                                                       slash.epoch < start and
+                                                                                                                                       e <= slash.epoch)
+                                                                                     val mergedList = mergeListSlashes(listSlashes, selectList)
                                                                                      {totalRedelegated: accEpoch.totalRedelegated + bonds.get(src).get(e),
                                                                                      totalAfterSlashing: accEpoch.totalAfterSlashing + applyListSlashes(mergedList, bonds.get(src).get(e))}))
     }
 
-    pure def computeAmountAfterSlashing(unbonds: (Epoch, Epoch) -> int, redelegatedUnbonds: Epoch -> RedelegatedBondsMap, validator: Address, slashes: Address -> List[Slash]): int = {
-      unbonds.keys().fold(0, (sum, unbondKey) => val start = unbondKey._1
-                                                    val listSlashes = slashes.get(validator).select(slash => start <= slash.epoch)
-                                                    val resultFold = if (redelegatedUnbonds.has(start)) foldRedelegatedBonds(redelegatedUnbonds.get(start), listSlashes, slashes)
-                                                                     else {totalRedelegated: 0, totalAfterSlashing: 0}
-                                                    val totalNoRedelegated = unbonds.get(unbondKey) - resultFold.totalRedelegated
-                                                    val afterNoRedelegated = applyListSlashes(listSlashes, totalNoRedelegated)
-                                                    sum + afterNoRedelegated + resultFold.totalAfterSlashing)
+    pure def computeAmountAfterSlashing(unbonds: (Epoch, Epoch) -> int, redelegatedUnbonds: Epoch -> RedelegatedBondsMap, validator: Address, slashes: Address -> List[Slash]): {sum: int, epochMap: Epoch -> int} = {
+      val initMap = unbonds.keys().map(pair => pair._1).mapBy(e => 0)
+      unbonds.keys().fold({sum: 0, epochMap: initMap}, (acc, unbondKey) => val start = unbondKey._1
+                                                                           val listSlashes = slashes.get(validator).select(slash => start <= slash.epoch)
+                                                                           val resultFold = if (redelegatedUnbonds.has(start)) foldRedelegatedBonds(redelegatedUnbonds.get(start), start, listSlashes, slashes)
+                                                                                            else {totalRedelegated: 0, totalAfterSlashing: 0}
+                                                                           val totalNoRedelegated = unbonds.get(unbondKey) - resultFold.totalRedelegated
+                                                                           val afterNoRedelegated = applyListSlashes(listSlashes, totalNoRedelegated)
+                                                                           val amountAfterSlashing = afterNoRedelegated + resultFold.totalAfterSlashing
+                                                                           {sum: acc.sum + amountAfterSlashing,
+                                                                            epochMap: acc.epochMap.set(start, amountAfterSlashing)})
     }
 
     // The function unbond is called when a user wants to unbond tokens from a validator.
@@ -457,30 +486,34 @@ module namada {
                                                                                else bonds.get(start))
         // Compute the updated delegators unbonded variable by adding the new unbonds if the unbonding is not happenging due to a redelegation                                                                                                                                 
         val updatedUnbonded = if (isRedelegation) delegator.unbonded.get(validator.address) else delegator.unbonded.get(validator.address).mapAddSet(newUnbonds)
+        // Compute the new redelegated unbonds
+        val newRedelegatedUnbonds = computeNewRedelegatedUnbonds(redelegatedBonds, resultUnbonding.toRemove, modifiedRedelegation)
+        val updatedRedelegatedUnbonded = if (isRedelegation) delegator.redelegatedUnbonded.get(validator.address)
+                                         else updateRedelegatedUnbonded(delegator.redelegatedUnbonded.get(validator.address), newRedelegatedUnbonds, endEpoch)
         // Compute the updated delegator's state
         val updatedDelegator = delegator.with("bonded", delegator.bonded.set(validator.address, updatedBonded))
                                         .with("redelegatedBonded", delegator.bonded.set(validator.address, updatedRedelegatedBonded))
-                                        .with("unbonded", delegator.unbonded.set(validator.address, updatedUnbonded))                                  
+                                        .with("unbonded", delegator.unbonded.set(validator.address, updatedUnbonded))
+                                        .with("redelegatedUnbonded", delegator.bonded.set(validator.address, updatedRedelegatedUnbonded))                             
         // Compute the updated validator's totalUnbonded variable
         val updatedTotalUnbonded = newUnbonds.keys().fold(validator.totalUnbonded.get(posState.epoch + PIPELINE_OFFSET),
                                                           (acc, unbondKey) => val start = unbondKey._1
                                                                               acc.mapSafeSet(start, acc.getOrElse(start, 0) + newUnbonds.get(unbondKey)))
-        // Compute the new redelegated unbonds
-        val newRedelegatedUnbonds = computeNewRedelegatedUnbonds(redelegatedBonds, resultUnbonding.toRemove, modifiedRedelegation)
+        // Compute the updated validator's total redelegated unbonded
+        val updatedTotalRedelegatedUnbonded = updateTotalRedelegatedUnbonded(validator.totalRedelegatedUnbonded.get(posState.epoch + PIPELINE_OFFSET), newRedelegatedUnbonds)
         // Compute how much out of amount has not been already removed from the validator's stake when slashing validators
         // at the end of previous epochs
-        val amountAfterSlashing = computeAmountAfterSlashing(newUnbonds, newRedelegatedUnbonds, validatorAddress, allValidators.keys().mapBy(v => allValidators.get(v).slashes))
-        // Compute the updated validator's total redelegated unbonded
-        val updatedTotalRedelegatedUnbonded = mergeTotalRedelegatedUnbonded(validator.totalRedelegatedUnbonded.get(posState.epoch + PIPELINE_OFFSET), newRedelegatedUnbonds)
+        val resultSlashing = computeAmountAfterSlashing(newUnbonds, newRedelegatedUnbonds, validatorAddress, allValidators.keys().mapBy(v => allValidators.get(v).slashes))
+        val amountAfterSlashing = resultSlashing.sum
         // Compute the updated validator's state by updating its state and totalUnbonded.
         val updatedValidator = validator.with("stake", validator.stake.set(posState.epoch + PIPELINE_OFFSET,
                                                                            validator.stake.get(posState.epoch + PIPELINE_OFFSET) - amountAfterSlashing))
                                         .with("totalUnbonded", validator.totalUnbonded.set(posState.epoch + PIPELINE_OFFSET, updatedTotalUnbonded))
                                         .with("totalRedelegatedUnbonded", validator.totalRedelegatedUnbonded.set(posState.epoch + PIPELINE_OFFSET, updatedTotalRedelegatedUnbonded))
         //{result: {success: true, delegator: updatedDelegator, validator: updatedValidator, posState: posState}, amount: amountAfterSlashing, redelegatedUnbonds: newRedelegatedUnbonds}
-        {result: {success: false, delegator: delegator, validator: validator, posState: posState}, amount: amountAfterSlashing, redelegatedUnbonds: newRedelegatedUnbonds}
+        {result: {success: false, delegator: delegator, validator: validator, posState: posState}, resultSlashing: resultSlashing}
       } else {
-        {result: {success: false, delegator: delegator, validator: validator, posState: posState}, amount: -1, redelegatedUnbonds: Map()}
+        {result: {success: false, delegator: delegator, validator: validator, posState: posState}, resultSlashing: {sum: -1, epochMap: Map()}}
       }
     }
 
@@ -518,13 +551,20 @@ module namada {
       val isNotChained = endEpochRedelegation >=0 implies endEpochRedelegation + UNBONDING_OFFSET > posState.epoch
       val resultUnbond = unbond(delegator, srcAddress, allValidators, posState, amount, true)
       if (isNotChained and resultUnbond.result.success == true) {
-        val updatedDelegator = resultUnbond.result.delegator.with("bonded", resultUnbond.result.delegator.bonded.set(destValidator.address,
-                                                                            resultUnbond.result.delegator.bonded.get(destValidator.address).addBond(posState.epoch + PIPELINE_OFFSET, resultUnbond.amount)))                                                                       
+        val newDelegatorState = resultUnbond.result.delegator
+        val amountAfterSlashing = resultUnbond.resultSlashing.sum
+        val updatedRedelegatedBonds = val existing = newDelegatorState.redelegatedBonded.get(destAddress).getOrElse(posState.epoch + PIPELINE_OFFSET, Map()).getOrElse(srcAddress, Map())
+                                      val updatedMap = mergeBondsMap(existing, resultUnbond.resultSlashing.epochMap)
+                                      newDelegatorState.redelegatedBonded.get(destAddress).mapSafeSet(posState.epoch + PIPELINE_OFFSET,
+                                                                                                      newDelegatorState.redelegatedBonded.get(destAddress).getOrElse(posState.epoch + PIPELINE_OFFSET, Map()).mapSafeSet(srcAddress, updatedMap))
+        val updatedDelegator = resultUnbond.result.delegator.with("bonded", newDelegatorState.bonded.set(destValidator.address,
+                                                                                                         newDelegatorState.bonded.get(destValidator.address).addBond(posState.epoch + PIPELINE_OFFSET, amountAfterSlashing))) 
+                                                            .with("redelegatedBonded",  newDelegatorState.redelegatedBonded.set(destValidator.address, updatedRedelegatedBonds))
         val updatedDestValidator = destValidator.with("stake", destValidator.stake.set(posState.epoch + PIPELINE_OFFSET,
-                                                                                       destValidator.stake.get(posState.epoch + PIPELINE_OFFSET) + resultUnbond.amount))
+                                                                                       destValidator.stake.get(posState.epoch + PIPELINE_OFFSET) + amountAfterSlashing))
                                                 .with("totalBonded", destValidator.totalBonded.set(posState.epoch + PIPELINE_OFFSET,
-                                                                                                   destValidator.totalBonded.get(posState.epoch + PIPELINE_OFFSET) + resultUnbond.amount))      
-        {success: false, delegator: updatedDelegator, srcValidator: resultUnbond.result.validator, destValidator: updatedDestValidator, posState: posState}
+                                                                                                   destValidator.totalBonded.get(posState.epoch + PIPELINE_OFFSET) + amountAfterSlashing))      
+        {success: true, delegator: updatedDelegator, srcValidator: resultUnbond.result.validator, destValidator: updatedDestValidator, posState: posState}
       } else {
         {success: false, delegator: delegator, srcValidator: srcValidator, destValidator: destValidator, posState: posState}
       }
@@ -801,6 +841,7 @@ module namada {
                                                      totalRedelegatedUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
                                                      totalBonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => 0),
                                                      incomingRedelegations: USERS.mapBy(user => -1),
+                                                     outgoingRedelegations: VALIDATORS.mapBy(x => Map()),
                                                      slashes: List(),
                                                      frozen: 0}),
         pos' = {posAccount: 0,
@@ -876,6 +917,7 @@ module namada {
                             totalRedelegatedUnbonded: 1.to(1+PIPELINE_OFFSET).mapBy(e => Map()),
                             totalBonded: 1.to(1+PIPELINE_OFFSET).mapBy(e => 0),
                             incomingRedelegations: USERS.mapBy(user => -1),
+                            outgoingRedelegations: VALIDATORS.mapBy(x => Map()),
                             slashes: List(),
                             frozen: 0}
       val posState = {posAccount: 0,
@@ -1004,6 +1046,7 @@ module namada {
                                                      totalRedelegatedUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
                                                      totalBonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => if (validator=="alice" and e==UNBONDING_OFFSET + CUBIC_OFFSET - 1) 200000 else 0),
                                                      incomingRedelegations: USERS.mapBy(user => -1),
+                                                     outgoingRedelegations: VALIDATORS.mapBy(x => Map()),
                                                      slashes: List(),
                                                      frozen: 0}),
         pos' = {posAccount: 200000,
