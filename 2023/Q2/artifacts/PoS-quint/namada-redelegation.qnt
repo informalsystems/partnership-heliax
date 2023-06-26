@@ -510,38 +510,58 @@ module namada {
                                                                            validator.stake.get(posState.epoch + PIPELINE_OFFSET) - amountAfterSlashing))
                                         .with("totalUnbonded", validator.totalUnbonded.set(posState.epoch + PIPELINE_OFFSET, updatedTotalUnbonded))
                                         .with("totalRedelegatedUnbonded", validator.totalRedelegatedUnbonded.set(posState.epoch + PIPELINE_OFFSET, updatedTotalRedelegatedUnbonded))
-        //{result: {success: true, delegator: updatedDelegator, validator: updatedValidator, posState: posState}, amount: amountAfterSlashing, redelegatedUnbonds: newRedelegatedUnbonds}
-        {result: {success: false, delegator: delegator, validator: validator, posState: posState}, resultSlashing: resultSlashing}
+        {result: {success: true, delegator: updatedDelegator, validator: updatedValidator, posState: posState},  resultSlashing: resultSlashing}
       } else {
         {result: {success: false, delegator: delegator, validator: validator, posState: posState}, resultSlashing: {sum: -1, epochMap: Map()}}
       }
+    }
+
+    pure def computeAmountAfterSlashingWithdraw(unbonds: (Epoch, Epoch) -> int, redelegatedUnbonds: (Epoch, Epoch) -> RedelegatedBondsMap, validator: Address, slashes: Address -> List[Slash]): {sum: int, epochMap: Epoch -> int} = {
+      val initMap = unbonds.keys().map(pair => pair._1).mapBy(e => 0)
+      unbonds.keys().fold({sum: 0, epochMap: initMap}, (acc, unbondKey) => val start = unbondKey._1
+                                                                           val end = unbondKey._2
+                                                                           val listSlashes = slashes.get(validator).select(slash => start <= slash.epoch and
+                                                                                                                                    end  - UNBONDING_OFFSET - CUBIC_OFFSET > slash.epoch)
+                                                                           val resultFold = if (redelegatedUnbonds.has(unbondKey)) foldRedelegatedBonds(redelegatedUnbonds.get(unbondKey), start, listSlashes, slashes)
+                                                                                            else {totalRedelegated: 0, totalAfterSlashing: 0}
+                                                                           val totalNoRedelegated = unbonds.get(unbondKey) - resultFold.totalRedelegated
+                                                                           val afterNoRedelegated = applyListSlashes(listSlashes, totalNoRedelegated)
+                                                                           val amountAfterSlashing = afterNoRedelegated + resultFold.totalAfterSlashing
+                                                                           {sum: acc.sum + amountAfterSlashing,
+                                                                            epochMap: acc.epochMap.set(start, amountAfterSlashing)})
     }
 
     // The function withdraw is called when a user wants to withdraw tokens from a validator.
     // 1. First it computes whether there are tokens ready to be withdrawn and returns an error in case there are none.
     // 2. Then records that those tokens are withdrawn by removing the withdrawable unbond records from unbonded.
     // 3. Finally, it unlocks the tokens by transferring them from the PoS special account to the user's account, after slashing them.
-    pure def withdraw(delegator: DelegatorState, validator: ValidatorState, posState: PosState): ResultTx = {
+    pure def withdraw(delegator: DelegatorState, validatorAddress: Address, allValidators: Address -> ValidatorState, posState: PosState): ResultTx = {
+      val validator = allValidators.get(validatorAddress)
       val unbonds = delegator.unbonded.get(validator.address)
-      // Filter the the set of unbonds that can be withdrawn
-      val setWithdrawn = unbonds.keys().filter(unbondKey => val end = unbondKey._2
-                                                            end <= posState.epoch)
-      if (size(setWithdrawn) > 0) {
+      val redelegatedUnbonds = delegator.redelegatedUnbonded.get(validator.address)
+      // Select the set of unbonds that can be withdrawn
+      val setWithdrawn = unbonds.keys().filter(unbondKey => unbondKey._2 <= posState.epoch).mapBy(unbondKey => unbonds.get(unbondKey))
+      if (size(setWithdrawn.keys()) > 0) {
         // Compute how much out of amount is withdrawn after slashing by leveraging applyListSlashes
-        val amountAfterSlashing = setWithdrawn.fold(0, (sum, unbondKey) => val start = unbondKey._1
-                                                                           val end = unbondKey._2
-                                                                           val listSlashes = validator.slashes.select(slash => start <= slash.epoch and
-                                                                                                                               end  - UNBONDING_OFFSET - CUBIC_OFFSET > slash.epoch)
-                                                                           sum + applyListSlashes(listSlashes, unbonds.get(unbondKey)))
+        val amountAfterSlashing = computeAmountAfterSlashingWithdraw(setWithdrawn, redelegatedUnbonds, validatorAddress, allValidators.keys().mapBy(v => allValidators.get(v).slashes)).sum
         // Remove the sent of withdrawn unbonds from the set of unbonds
         // Transfer withdrawn tokens from the PoS account to the user's account
-        val updatedDelegator = delegator.with("unbonded", delegator.unbonded.set(validator.address, unbonds.mapRemoveSet(setWithdrawn)))
+        val updatedDelegator = delegator.with("unbonded", delegator.unbonded.set(validator.address, unbonds.mapRemoveSet(setWithdrawn.keys())))
+                                        .with("redelegatedUnbonded", delegator.redelegatedUnbonded.set(validator.address, redelegatedUnbonds.mapRemoveSet(setWithdrawn.keys())))
                                         .with("balance", delegator.balance + amountAfterSlashing)
         val updatedPos = posState.with("posAccount", posState.posAccount - amountAfterSlashing)
         {success: true, delegator: updatedDelegator, validator: validator, posState: updatedPos}
       } else {
         {success: false, delegator: delegator, validator: validator, posState: posState}
       }
+    }
+
+    pure def mergeOutgoingRedelegations(existing: (Epoch, Epoch) -> int, new: Epoch -> int, curEpoch: Epoch): (Epoch, Epoch) -> int = {
+      val newTuples = tuples(new.keys(), Set(curEpoch))
+      existing.keys().union(newTuples).mapBy(pair => val start = pair._1
+                                                     if (existing.has(pair) and pair.in(newTuples)) existing.get(pair) + new.get(start)
+                                                     else if (existing.has(pair)) existing.get(pair)
+                                                          else new.get(start))
     }
 
     pure def redelegate(delegator: DelegatorState, allValidators: Address -> ValidatorState, srcAddress: Address, destAddress: Address, posState: PosState, amount: int): ResultRedelegationTx = {
@@ -552,6 +572,7 @@ module namada {
       val resultUnbond = unbond(delegator, srcAddress, allValidators, posState, amount, true)
       if (isNotChained and resultUnbond.result.success == true) {
         val newDelegatorState = resultUnbond.result.delegator
+        val newSrcValidatorState = resultUnbond.result.validator
         val amountAfterSlashing = resultUnbond.resultSlashing.sum
         val updatedRedelegatedBonds = val existing = newDelegatorState.redelegatedBonded.get(destAddress).getOrElse(posState.epoch + PIPELINE_OFFSET, Map()).getOrElse(srcAddress, Map())
                                       val updatedMap = mergeBondsMap(existing, resultUnbond.resultSlashing.epochMap)
@@ -560,11 +581,14 @@ module namada {
         val updatedDelegator = resultUnbond.result.delegator.with("bonded", newDelegatorState.bonded.set(destValidator.address,
                                                                                                          newDelegatorState.bonded.get(destValidator.address).addBond(posState.epoch + PIPELINE_OFFSET, amountAfterSlashing))) 
                                                             .with("redelegatedBonded",  newDelegatorState.redelegatedBonded.set(destValidator.address, updatedRedelegatedBonds))
+        val updatedOutgoingRedelegations = mergeOutgoingRedelegations(newSrcValidatorState.outgoingRedelegations.get(destAddress), resultUnbond.resultSlashing.epochMap, posState.epoch)
+        val updatedSrcValidator = newSrcValidatorState.with("outgoingRedelegations", newSrcValidatorState.outgoingRedelegations.set(destAddress, updatedOutgoingRedelegations))
         val updatedDestValidator = destValidator.with("stake", destValidator.stake.set(posState.epoch + PIPELINE_OFFSET,
                                                                                        destValidator.stake.get(posState.epoch + PIPELINE_OFFSET) + amountAfterSlashing))
                                                 .with("totalBonded", destValidator.totalBonded.set(posState.epoch + PIPELINE_OFFSET,
-                                                                                                   destValidator.totalBonded.get(posState.epoch + PIPELINE_OFFSET) + amountAfterSlashing))      
-        {success: true, delegator: updatedDelegator, srcValidator: resultUnbond.result.validator, destValidator: updatedDestValidator, posState: posState}
+                                                                                                   destValidator.totalBonded.get(posState.epoch + PIPELINE_OFFSET) + amountAfterSlashing))
+                                                .with("incomingRedelegations", destValidator.incomingRedelegations.set(delegator.address, posState.epoch + PIPELINE_OFFSET))      
+        {success: true, delegator: updatedDelegator, srcValidator: updatedSrcValidator, destValidator: updatedDestValidator, posState: posState}
       } else {
         {success: false, delegator: delegator, srcValidator: srcValidator, destValidator: destValidator, posState: posState}
       }
@@ -727,7 +751,7 @@ module namada {
     }
 
     action actionWithdraw(user: Address, validator: Address): bool = all {
-      val result = withdraw(delegators.get(user), validators.get(validator), pos)
+      val result = withdraw(delegators.get(user), validator, validators, pos)
       all {
         if (enforceStateTransition) require(result.success) else true,
         commonTxAfter(user, validator, result),
