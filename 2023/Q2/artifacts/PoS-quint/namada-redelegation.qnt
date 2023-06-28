@@ -39,11 +39,11 @@ module namada {
     // 0: no limit
     // 1: limited but it allows multiple infractions with the same stake
     // 2: disallow multiple infractions with the same stake
-    pure val limitEvidence = 0
+    pure val limitEvidence = 2
 
     // Used to guarantee every step produces a state transition
     // IMPORTANT: Set to false for tests
-    pure val enforceStateTransition = false
+    pure val enforceStateTransition = true
 
     // Last transaction executed by step.
     // Amount is over used by the actions:
@@ -322,21 +322,19 @@ module namada {
     // 1. It first checks if it is the last transaction of the current epoch.
     // 2. If it is the last transaction of the epoch, it calls the endOfEpoch function.
     // 3. Otherwise, it updates the variables using the result of the transaciton and increases counterTxs.
-    action commonTxAfter(user: Address, validator: Address, result: ResultTx): bool = all {
+    action commonTxAfter(updateDelegators: Address -> DelegatorState, updatedValidators: Address -> ValidatorState, updatedPos: PosState): bool = all {
+      delegators' = updateDelegators,
+      nextInfractionEpoch' = nextInfractionEpoch,
       if (pos.counterTxs + 1 == TXS_EPOCH) {
-        val resultEndOfEpoch = endOfEpoch(validators.set(validator, result.validator), result.posState, pos.epoch)
+        val resultEndOfEpoch = endOfEpoch(updatedValidators, updatedPos, pos.epoch)
         all {
-          delegators' = delegators.set(user, result.delegator),
           validators' = resultEndOfEpoch.validatorsState,
           pos' = resultEndOfEpoch.posState,
-          nextInfractionEpoch' = nextInfractionEpoch
         }
       } else {
         all {
-          delegators' = delegators.set(user, result.delegator),
-          validators' = validators.set(validator, result.validator),
-          pos' = result.posState.with("counterTxs", result.posState.counterTxs + 1),
-          nextInfractionEpoch' = nextInfractionEpoch
+          validators' = updatedValidators,
+          pos' = updatedPos.with("counterTxs", updatedPos.counterTxs + 1),
         }
       }
     }
@@ -344,8 +342,10 @@ module namada {
     action actionDelegate(user: Address, validator: Address, amount: int): bool = all {
       val result = delegate(delegators.get(user), validators.get(validator), pos, amount)
       all {
-        if (enforceStateTransition) require(result.success) else true,
-        commonTxAfter(user, validator, result),
+        require(enforceStateTransition implies result.success),
+        commonTxAfter(delegators.set(user, result.delegator),
+                      validators.set(validator, result.validator),
+                      result.posState),
         lastTx' = {tag: "Delegate", result: result.success, user: user, validator: validator, amount: amount}
       }
     }
@@ -353,8 +353,10 @@ module namada {
     action actionUnbond(user: Address, validator: Address, amount: int): bool = all {
       val result = unbond(delegators.get(user), validator, validators, pos, amount, false).result
       all {
-        if (enforceStateTransition) require(result.success) else true,
-        commonTxAfter(user, validator, result),
+        require(enforceStateTransition implies result.success),
+        commonTxAfter(delegators.set(user, result.delegator),
+                      validators.set(validator, result.validator),
+                      result.posState),
         lastTx' = {tag: "Unbond", result: result.success, user: user, validator: validator, amount: amount}
       }
     }
@@ -362,9 +364,22 @@ module namada {
     action actionWithdraw(user: Address, validator: Address): bool = all {
       val result = withdraw(delegators.get(user), validator, validators, pos)
       all {
-        if (enforceStateTransition) require(result.success) else true,
-        commonTxAfter(user, validator, result),
+        require(enforceStateTransition implies result.success),
+        commonTxAfter(delegators.set(user, result.delegator),
+                      validators.set(validator, result.validator),
+                      result.posState),
         lastTx' = {tag: "Withdraw", result: result.success, user: user, validator: validator, amount: 0}
+      }
+    }
+
+    action actionRedelegate(user: Address, srcValidator: Address, destValidator: Address, amount: int): bool = all {
+      val result = redelegate(delegators.get(user), validators, srcValidator, destValidator, pos, amount)
+      all {
+        require(enforceStateTransition implies result.success),
+        commonTxAfter(delegators.set(user, result.delegator),
+                      validators.set(srcValidator, result.srcValidator).set(destValidator, result.destValidator),
+                      result.posState),
+        lastTx' = {tag: "Redelegate", result: result.success, user: user, validator: srcValidator, amount: amount}
       }
     }
 
@@ -386,11 +401,8 @@ module namada {
       require(limitEvidence == 2 implies validators.get(validator).frozen >= e),
       require(amountUnbond == 0 or validators.get(validator).frozen >= pos.epoch),
       require(amountDelegate == 0),
-      val result = {success: true, delegator: delegators.get(user), validator: validators.get(validator), posState: pos}
-      all {
-        commonTxAfter(user, validator, result),
-        lastTx' = {tag: "Advance", result: result.success, user: user, validator: validator, amount: 0}
-      }
+      commonTxAfter(delegators, validators, pos),
+      lastTx' = {tag: "Advance", result: true, user: user, validator: validator, amount: 0}
     }
 
     // ****************************************************************************
@@ -497,6 +509,7 @@ module namada {
     action step: bool = {
         nondet user = USERS.oneOf()
         nondet validator = VALIDATORS.oneOf()
+        nondet destValidator = VALIDATORS.setRemove(validator).oneOf()
         //nondet amount = 0.to(MAX_UINT).oneOf()
         nondet amountDelegate = 0.to(delegators.get(user).balance).oneOf()
         nondet amountUnbond = 0.to(delegators.get(user).bonded.get(validator).keys().fold(0, (sum, e) => sum + delegators.get(user).bonded.get(validator).get(e))).oneOf()
@@ -507,6 +520,7 @@ module namada {
             actionUnbond(user, validator, amountUnbond),
             actionWithdraw(user, validator),
             actionEvidence(e, validator),
+            actionRedelegate(user, validator, destValidator, amountUnbond),
             //allUnchanged
             actionFauxTransaction(user, validator, amountDelegate, amountUnbond, e)
         }
