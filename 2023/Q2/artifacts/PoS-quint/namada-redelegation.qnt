@@ -39,11 +39,11 @@ module namada {
     // 0: no limit
     // 1: limited but it allows multiple infractions with the same stake
     // 2: disallow multiple infractions with the same stake
-    pure val limitEvidence = 2
+    pure val limitEvidence = 0
 
     // Used to guarantee every step produces a state transition
     // IMPORTANT: Set to false for tests
-    pure val enforceStateTransition = true
+    pure val enforceStateTransition = false
 
     // Last transaction executed by step.
     // Amount is over used by the actions:
@@ -104,7 +104,7 @@ module namada {
                             else bonds.mapRemoveSet(resultUnbonding.toRemove).set(resultUnbonding.new.start, resultUnbonding.new.amount)
         // Compute a modified redelegation bond in case one was partially unbonded
         val modifiedRedelegation =  if (not(redelegatedBonds.has(resultUnbonding.new.start))) {epoch: -1, valsToRemove: Set(), valToModify: "", epochsToRemove: Set(), epochToModify: -1, newAmount: -1}
-                                    else computeModifiedRedelegation(redelegatedBonds, resultUnbonding.new.start, resultUnbonding.new.amount)
+                                    else computeModifiedRedelegation(redelegatedBonds.get(resultUnbonding.new.start), resultUnbonding.new.start, bonds.get(resultUnbonding.new.start) - resultUnbonding.new.amount)
         // Compute the updated delegator's redelegated bonded by removing the unbonded bonds and updating the partially unbonded one computed in the previous step
         val updatedRedelegatedBonded = if (modifiedRedelegation.epoch == -1) redelegatedBonds.mapRemoveSet(resultUnbonding.toRemove)
                                        else redelegatedBonds.mapRemoveSet(resultUnbonding.toRemove).set(modifiedRedelegation.epoch, updateRedelegatedBondsMap(redelegatedBonds.get(modifiedRedelegation.epoch), modifiedRedelegation))
@@ -121,9 +121,9 @@ module namada {
                                          else updateRedelegatedUnbonded(delegator.redelegatedUnbonded.get(validator.address), newRedelegatedUnbonds, endEpoch)
         // Compute the updated delegator's state
         val updatedDelegator = delegator.with("bonded", delegator.bonded.set(validator.address, updatedBonded))
-                                        .with("redelegatedBonded", delegator.bonded.set(validator.address, updatedRedelegatedBonded))
+                                        .with("redelegatedBonded", delegator.redelegatedBonded.set(validator.address, updatedRedelegatedBonded))
                                         .with("unbonded", delegator.unbonded.set(validator.address, updatedUnbonded))
-                                        .with("redelegatedUnbonded", delegator.bonded.set(validator.address, updatedRedelegatedUnbonded))                             
+                                        .with("redelegatedUnbonded", delegator.redelegatedUnbonded.set(validator.address, updatedRedelegatedUnbonded))                             
         // Compute the updated validator's totalUnbonded variable
         val updatedTotalUnbonded = newUnbonds.keys().fold(validator.totalUnbonded.get(posState.epoch + PIPELINE_OFFSET),
                                                           (acc, unbondKey) => val start = unbondKey._1
@@ -730,6 +730,35 @@ module namada {
         .then(actionFauxTransaction(user, validator, 0, 0, -1).repeated(3)) // epoch = initEpoch + 6..initEpoch + 8
         .then(all{assert(validators.get(validator).stake.get(initEpoch + 9) == stakeAfterProcessing),
                   allUnchanged })
+      }
+    }
+
+    run redelegateTest = {
+      nondet user = USERS.oneOf()
+      nondet srcValidator = VALIDATORS.oneOf()
+      nondet destValidator = VALIDATORS.setRemove(srcValidator).oneOf()
+      val initEpoch = UNBONDING_OFFSET + CUBIC_OFFSET
+      all {
+        require(size(VALIDATORS) >= 2),
+        init
+        .then(actionDelegate(user, srcValidator, 10))
+        .then(actionFauxTransaction(user, srcValidator, 0, 0, -1).repeated(PIPELINE_OFFSET))
+        .then(actionRedelegate(user, srcValidator, destValidator, 5))
+        .then(all {assert(delegators.get(user).redelegatedBonded.get(destValidator).get(initEpoch+2*PIPELINE_OFFSET+1).get(srcValidator).get(initEpoch+PIPELINE_OFFSET) == 5),
+                   assert(validators.get(destValidator).incomingRedelegations.get(user) == initEpoch+2*PIPELINE_OFFSET+1),
+                   assert(validators.get(srcValidator).outgoingRedelegations.get(destValidator).get((initEpoch+PIPELINE_OFFSET, initEpoch+PIPELINE_OFFSET+1)) == 5),
+                   allUnchanged})
+        .then(actionFauxTransaction(user, srcValidator, 0, 0, -1).repeated(PIPELINE_OFFSET))
+        .then(actionUnbond(user, destValidator, 3))
+        .then(val bondStart = initEpoch+PIPELINE_OFFSET
+              val redelegationEnd = bondStart+PIPELINE_OFFSET+1
+              val unbondEnd = redelegationEnd+PIPELINE_OFFSET+CUBIC_OFFSET+UNBONDING_OFFSET+1
+              val unbondMaterialized = redelegationEnd+PIPELINE_OFFSET+1
+              all {assert(delegators.get(user).redelegatedBonded.get(destValidator).get(redelegationEnd).get(srcValidator).get(bondStart) == 2),
+                   assert(delegators.get(user).redelegatedUnbonded.get(destValidator).get((redelegationEnd, unbondEnd)).get(srcValidator).get(bondStart) == 3),
+                   assert(validators.get(destValidator).totalRedelegatedUnbonded.get(unbondMaterialized).get((redelegationEnd, srcValidator)).get(bondStart) == 3),
+                   allUnchanged})
+        //assert(delegators.get(user).redelegatedBonded.get(destValidator).get(initEpoch+2*PIPELINE_OFFSET+1).get(srcValidator).get(initEpoch+PIPELINE_OFFSET) == 5)
       }
     }
 }

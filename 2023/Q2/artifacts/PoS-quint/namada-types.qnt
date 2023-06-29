@@ -140,7 +140,7 @@ module types {
   pure val USERS: Set[str] = Set("alice", "bob")
 
   // Set of all validator addresses
-  pure val VALIDATORS: Set[str] = Set("alice")
+  pure val VALIDATORS: Set[str] = Set("alice", "bob")
 
   // Transactions per epoch
   // the spec is not fully ready to handle multiple txs per epoch

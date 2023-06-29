@@ -119,7 +119,8 @@ module helperFunctions {
                                                           modified: if (resultIteration.new.start == -1) acc.modified.with("valsToRemove", acc.modified.valsToRemove.setAdd(src))
                                                                                                                      .with("valToModify", src)
                                                                                                                      .with("epochsToRemove", resultIteration.toRemove)
-                                                                    else acc.modified.with("valToModify", src)
+                                                                    else acc.modified.with("valsToRemove", acc.modified.valsToRemove.setAdd(src))
+                                                                                     .with("valToModify", src)
                                                                                      .with("epochsToRemove", resultIteration.toRemove.setAdd(resultIteration.new.start))
                                                                                      .with("epochToModify", resultIteration.new.start)
                                                                                      .with("newAmount", resultIteration.new.amount)}
