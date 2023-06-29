@@ -737,28 +737,35 @@ module namada {
       nondet user = USERS.oneOf()
       nondet srcValidator = VALIDATORS.oneOf()
       nondet destValidator = VALIDATORS.setRemove(srcValidator).oneOf()
+      nondet amountDelegate = 2.to(INIT_BALANCE).oneOf()
+      nondet amountRedelegate = 2.to(amountDelegate).oneOf()
+      nondet amountUnbond = 1.to(amountRedelegate-1).oneOf()
       val initEpoch = UNBONDING_OFFSET + CUBIC_OFFSET
       all {
         require(size(VALIDATORS) >= 2),
         init
-        .then(actionDelegate(user, srcValidator, 10))
+        .then(actionDelegate(user, srcValidator, amountDelegate))
         .then(actionFauxTransaction(user, srcValidator, 0, 0, -1).repeated(PIPELINE_OFFSET))
-        .then(actionRedelegate(user, srcValidator, destValidator, 5))
-        .then(all {assert(delegators.get(user).redelegatedBonded.get(destValidator).get(initEpoch+2*PIPELINE_OFFSET+1).get(srcValidator).get(initEpoch+PIPELINE_OFFSET) == 5),
+        .then(actionRedelegate(user, srcValidator, destValidator, amountRedelegate))
+        .then(all {assert(delegators.get(user).redelegatedBonded.get(destValidator).get(initEpoch+2*PIPELINE_OFFSET+1).get(srcValidator).get(initEpoch+PIPELINE_OFFSET) == amountRedelegate),
                    assert(validators.get(destValidator).incomingRedelegations.get(user) == initEpoch+2*PIPELINE_OFFSET+1),
-                   assert(validators.get(srcValidator).outgoingRedelegations.get(destValidator).get((initEpoch+PIPELINE_OFFSET, initEpoch+PIPELINE_OFFSET+1)) == 5),
+                   assert(validators.get(srcValidator).outgoingRedelegations.get(destValidator).get((initEpoch+PIPELINE_OFFSET, initEpoch+PIPELINE_OFFSET+1)) == amountRedelegate),
                    allUnchanged})
         .then(actionFauxTransaction(user, srcValidator, 0, 0, -1).repeated(PIPELINE_OFFSET))
-        .then(actionUnbond(user, destValidator, 3))
+        .then(actionUnbond(user, destValidator, amountUnbond))
         .then(val bondStart = initEpoch+PIPELINE_OFFSET
               val redelegationEnd = bondStart+PIPELINE_OFFSET+1
               val unbondEnd = redelegationEnd+PIPELINE_OFFSET+CUBIC_OFFSET+UNBONDING_OFFSET+1
               val unbondMaterialized = redelegationEnd+PIPELINE_OFFSET+1
-              all {assert(delegators.get(user).redelegatedBonded.get(destValidator).get(redelegationEnd).get(srcValidator).get(bondStart) == 2),
-                   assert(delegators.get(user).redelegatedUnbonded.get(destValidator).get((redelegationEnd, unbondEnd)).get(srcValidator).get(bondStart) == 3),
-                   assert(validators.get(destValidator).totalRedelegatedUnbonded.get(unbondMaterialized).get((redelegationEnd, srcValidator)).get(bondStart) == 3),
+              all {assert(delegators.get(user).redelegatedBonded.get(destValidator).get(redelegationEnd).get(srcValidator).get(bondStart) == amountRedelegate - amountUnbond),
+                   assert(delegators.get(user).redelegatedUnbonded.get(destValidator).get((redelegationEnd, unbondEnd)).get(srcValidator).get(bondStart) == amountUnbond),
+                   assert(validators.get(destValidator).totalRedelegatedUnbonded.get(unbondMaterialized).get((redelegationEnd, srcValidator)).get(bondStart) == amountUnbond),
                    allUnchanged})
-        //assert(delegators.get(user).redelegatedBonded.get(destValidator).get(initEpoch+2*PIPELINE_OFFSET+1).get(srcValidator).get(initEpoch+PIPELINE_OFFSET) == 5)
+        .then(actionFauxTransaction(user, srcValidator, 0, 0, -1).repeated(CUBIC_OFFSET+UNBONDING_OFFSET+1))
+        .then(actionWithdraw(user, destValidator))
+        .then(all {assert(delegators.get(user).redelegatedUnbonded.get(destValidator) == Map()),
+                   assert(delegators.get(user).balance == INIT_BALANCE - amountDelegate + amountUnbond),
+                   allUnchanged})
       }
     }
 }
