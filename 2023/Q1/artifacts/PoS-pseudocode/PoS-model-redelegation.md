@@ -18,7 +18,7 @@
 
 - There is a single token type
 - There is an initial set of active and inactive validators
-- There are always enough non-jalied, candidate validators to fulfill the active set of validators at any given epoch
+- There are always enough non-jailed, candidate validators to fulfill the active set of validators at any given epoch
 
 ## Definitions
 
@@ -32,15 +32,17 @@
 
 - A redelegation is composed of one or more bonds (aka `redelegation bonds`). Each redelegation bond is a pair of the epoch at which the redelegated tokens started contributing to the stake of the source validator and the amount of tokens. It is important to keep track of the starting epochs in order to apply slashes precisely.
 
-- Given a redelegation, we call `redelegation slashing window` the set of consecutive epochs in which the destination validator may be slashed due to a misbehaviour of the source validator.
+- Given a redelegation, we call `redelegation slashing window` the set of consecutive epochs in which the tokens redelegated to the destination validator may be slashed due to a misbehaviour of the source validator.
   - In the current design, the redelegation slashing window of a redelegation spans from `redelegation.start - unbonding_length` up to `redelegation.end - 1`.
-  - The window's lower bound is determined by the fact that when a redelegation is issued, we apply all slashes of the source validator already processed. This means any slash for an infraction committed at an epoch `< redelegation.start - unbonding_length`.
+  - The window's lower bound is determined by the fact that when a redelegation is created, we apply all slashes of the source validator already known. This means any slash for an infraction committed at an epoch `< redelegation.start - unbonding_length`.
   - The window's upper bound is determined by the epoch at which the redelegated tokens stop contributing to the stake of the source validator.
+
+The aim of these bounds is to provide consistent accountability, in that any stake contributing to an infraction will be punished proportionally regardless of when the infraction is detected.
 
 - We say a redelegation is a `chain redelegation` when the source validator redelegates some tokens that were redelegated by a second validator while infractions of the latter validator can still be processed. In the current design, a redelegation is considered a chain redelegation if already redelegated tokens are redelegated before the end of the initial redelegation `+ unbonding_length`. This is simple to compute:
   - Let `redelegation` be the initial redelegation and assume that `redelegation.start = e`.
   - The redelegation slashing window then spans from `redelegation.start - unbonding_length` up to `redelegation.end - 1`. Thus, the last epoch at which the source validator may misbehave and we need to account for it is `redelegation.end - 1 = redelegation.start + pipeline_length - 1 = e + pipeline_length - 1`.
-  - An infraction is processed after `unbonding_length` epoch from the misbehaving epoch. Thus, if the source validator misbehaves at `redelegation.end - 1`, the infraction will be processed at the end of epoch `redelegation.end - 1 + unbonding_length`.
+  - An infraction is processed after `unbonding_length` epochs from the misbehaving epoch. Thus, if the source validator misbehaves at `redelegation.end - 1`, the infraction will be processed at the end of epoch `redelegation.end - 1 + unbonding_length`.
   - Therefore, a redelegation of the redelegated tokens of `redelegation` is only considered a chain redelegation if it occurs before `redelegation.end + unbonding_length` as required.
 
 ## Technical Specification
@@ -125,7 +127,7 @@ unbonding_length uint
 min_sentence uint
 votes_per_token uint
 duplicate_vote_rate float
-ligth_client_attack_rate float
+light_client_attack_rate float
 ```
 
 ### Variables
