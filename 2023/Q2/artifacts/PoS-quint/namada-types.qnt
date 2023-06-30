@@ -74,10 +74,7 @@ module types {
     // totalUnbonded is a map from unbonding epoch to unbonded bonds
     // The unbonded bonds are tracked in a map from bond starting epoch to amount of tokens
     totalUnbonded: Epoch -> Epoch -> int,
-    // Each validator keeps track of unbonded tokens that were redelegated per epoch
-    // totalRedelegatedUnbonded is a map from unbonding epoch and validator address to unbonded bonds
-    // The unbonded bonds are tracked in a map from bond starting epoch to amount of tokens
-    totalRedelegatedUnbonded: Epoch -> (Epoch, Address) -> Epoch -> int,
+    totalRedelegatedUnbonded: Epoch -> Epoch -> RedelegatedBondsMap,
     // Each validatro keeps track of bonded tokens per epoch
     // totalBonded is a map from bond starting epoch to amount of bonded tokens
     // It is used an the en of en epoch to compute how many tokens have been delegated

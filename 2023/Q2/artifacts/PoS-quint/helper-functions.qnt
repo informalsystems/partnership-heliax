@@ -294,27 +294,22 @@ module helperFunctions {
     // - @param existing a map of total redelegated unbonds from starting bonded epoch and source validator to a map of bonds.
     // - @param redelegatedUnbonds a set of redelegated unbonds.
     // - @returns an updated map that includes redelegatedUnbonds.
-    pure def updateTotalRedelegatedUnbonded(existing: (Epoch, Address) -> Epoch -> int, redelegatedUnbonds: Epoch -> RedelegatedBondsMap): (Epoch, Address) -> Epoch -> int = {
-      val newTuples =  redelegatedUnbonds.keys().fold(Set(), (acc, e) => acc.union(tuples(Set(e), redelegatedUnbonds.get(e).keys())))
-      existing.keys().union(newTuples).mapBy(pair => val start = pair._1
-                                                     val srcValidator = pair._2 
-                                                     if (existing.has(pair) and pair.in(newTuples)) mergeBondsMap(existing.get(pair), redelegatedUnbonds.get(start).get(srcValidator))
-                                                     else if (existing.has(pair)) existing.get(pair) else redelegatedUnbonds.get(start).get(srcValidator))
+    pure def updateTotalRedelegatedUnbonded(existing: Epoch -> RedelegatedBondsMap, new: Epoch -> RedelegatedBondsMap): Epoch -> RedelegatedBondsMap = {
+      existing.keys().union(new.keys()).mapBy(e => if (existing.has(e) and new.has(e)) mergeRedelegatedBondsMap(existing.get(e), new.get(e))
+                                                   else if (existing.has(e)) existing.get(e) else new.get(e))
     }
 
     run updateTotalRedelegatedUnbondedTest = {
-      val existing = Map((2, "alice") -> Map(1 -> 2, 3 -> 4),
-                         (2, "bob") -> Map(1 -> 2, 3 -> 4),
-                         (3, "alice") -> Map(1 -> 2, 3 -> 4))
+      val existing = Map(2 -> Map("alice" -> Map(1 -> 2, 3 -> 4), "bob" -> Map(1 -> 2, 3 -> 4)),
+                         3 -> Map("alice" -> Map(1 -> 2, 3 -> 4)))
       all {
         assert(updateTotalRedelegatedUnbonded(Map(), Map()) == Map()),
         assert(updateTotalRedelegatedUnbonded(existing, Map()) == existing),
         assert(updateTotalRedelegatedUnbonded(Map(), Map(2 -> Map("alice" -> Map(1 -> 2, 3 -> 4), "bob" -> Map(1 -> 2, 3 -> 4)))) ==
-                                              Map((2, "alice") -> Map(1 -> 2, 3 -> 4), (2, "bob") -> Map(1 -> 2, 3 -> 4))),
+                                              Map(2 -> Map("alice" -> Map(1 -> 2, 3 -> 4), "bob" -> Map(1 -> 2, 3 -> 4)))),
         assert(updateTotalRedelegatedUnbonded(existing, Map(2 -> Map("alice" -> Map(1 -> 2, 3 -> 4), "bob" -> Map(1 -> 2, 3 -> 4)))) ==
-                                              Map((2, "alice") -> Map(1 -> 4, 3 -> 8),
-                                                  (2, "bob") -> Map(1 -> 4, 3 -> 8),
-                                                  (3, "alice") -> Map(1 -> 2, 3 -> 4))),
+                                              Map(2 -> Map("alice" -> Map(1 -> 4, 3 -> 8), "bob" -> Map(1 -> 4, 3 -> 8)),
+                                                  3 -> Map("alice" -> Map(1 -> 2, 3 -> 4))))
       }
     }
 
