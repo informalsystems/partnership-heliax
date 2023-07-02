@@ -362,21 +362,21 @@ The `unbond` function unbonds `total_amount` tokens to belonging to a delegator 
 ```go
 func unbond(validator_address, delegator_address, total_amount, dest_validator_address)
 {
-  //disallow unbonding if the validator is frozen
+  // disallow unbonding if the validator is frozen
   var frozen = read_epoched_field(validators[validator_address].frozen, cur_epoch, false)
   if (is_validator(validator_address, cur_epoch+pipeline_length) && frozen == false) then
-    //compute total bonds from delegator to validator
+    // compute total bonds from delegator to validator
     var delbonds = {<start, amount> | amount = bonds[delegator_address][validator_address].deltas[start] > 0 && start <= cur_epoch + unbonding_length}
-    //check if there are enough bonds
-    //this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
+    // check if there are enough bonds
+    // this serves to check that there are bonds (in the docs) and that these are greater than the amount we are trying to unbond
     if (sum{amount | <start, amount> in delbonds} >= total_amount) then
       var remain = total_amount
       var amount_after_slashing = 0
-      //iterate over bonds and create unbonds
+      // iterate over bonds and create unbonds
       forall (<start, amount> in delbonds while remain > 0) do
-        //Retrieve the bond's associated redelegation records (if any)
+        // Retrieve the bond's associated redelegation records (if any)
         var number_redelegations = redelegated_bonds[delegator_address][validator_address][start].size()
-        //Take the minimum between the remainder and the unbond. This is equal to amount if remain > amount and remain otherwise 
+        // Take the minimum between the remainder and the unbond. This is equal to amount if remain > amount and remain otherwise 
         var amount_unbonded = min{amount, remain}
         var redelegated_amount = 0
         if number_redelegations > 0 then
@@ -387,14 +387,14 @@ func unbond(validator_address, delegator_address, total_amount, dest_validator_a
         // set of slashes that happened while the bond was contributing to the validator's stake
         var set_slashes = {slash | slash in slashes[validator_address] && start <= slash.epoch }
 
-        //compute amount after slashing if some of the tokens do not come from redelegation
+        // compute amount after slashing if some of the tokens do not come from redelegation
         if redelegated_amount < amount_unbonded then 
           amount_unbonded_after_slashing = compute_amount_after_slashing(set_slashes, amount_unbonded - redelegated_amount)
           validators[validator_address].total_unbonded[cur_epoch+pipeline_length][start] += amount_unbonded - redelegated_amount
 
-        //compute amount after slashing the tokens coming from redelegation
+        // compute amount after slashing the tokens coming from redelegation
         remain -= amount_unbonded - redelegated_amount
-        //initialize unbond_redelegation_record to bottom
+        // initialize unbond_redelegation_record to bottom
         if number_redelegations > 0 then
           forall (let [redelegation_validator, redelegation_bonds] of redelegated_bonds[delegator_address][validator_address][start]) do
             forall (let [red_bond_start, red_bond_amount] of redelegation_bonds while remain > 0) do
@@ -416,12 +416,12 @@ func unbond(validator_address, delegator_address, total_amount, dest_validator_a
 
         amount_after_slashing += amount_unbonded_after_slashing
 
-        //update bond
+        // update bond
         bonds[delegator_address][validator_address].deltas[start] = amount - amount_unbonded
 
-        //if it is a redelegation, then create redelegated bonds at the dest_validator_address
-        //and record the outgoing redelegation at the source validator
-        //if it is not a redelegation, then create unbonds at validator_address and manage redelegated unbonds
+        // if it is a redelegation, then create redelegated bonds at the dest_validator_address
+        // and record the outgoing redelegation at the source validator
+        // if it is not a redelegation, then create unbonds at validator_address and manage redelegated unbonds
         if dest_validator_address != "" then
           redelegated_bonds[delegator_address][dest_validator_address][cur_epoch+pipeline_length][src_validator_address][bond_start] += amount
           validators[validator_address].outgoing_redelegations[dest_validator_address][(start, cur_epoch)] += amount_unbonded_after_slashing
@@ -439,11 +439,11 @@ func unbond(validator_address, delegator_address, total_amount, dest_validator_a
 The `withdraw` function withdraws all tokens unbonded by a delegator `delegator_address` from a validator `validator_address` whose unbonding period has expired. It takes the following steps:
 
 1. It first computes the total amount of tokens that the delegator has unbonded from the validator whose unbonding period has expired.
-2. Then it iterates over the unbonds in `delunbonds`. For each unbond (a triple of bond start epoch `start`, unbond end epoch 'end' and amount `amount`), it computes how much should be withdrawn after slashing (`amount_after_slashing`) as follows:
+2. Then it iterates over the unbonds in `delunbonds`. For each unbond (a triple of bond start epoch `start`, unbond end epoch 'end', and amount `amount`), it computes how much should be withdrawn after slashing (`amount_after_slashing`) as follows:
    - It checks whether some of the tokens in the unbond were redelegated and if so computes the total amount of redelegated tokens (`redelegated_amount`).
    - It computes the set of slashes that ocurred while the tokens were contributing to the validator's stake.
    - Then it computes the how much is left after slashing the non-redelegated chunk of tokens (`amount - redelegated_amount`) after applying the set of slashes previously computed and adds it to `amount_after_slashing`.
-   - If some of the tokens were redelegated, then the function iterates of all redelegations. For each redelegation, it iterates over the redelegation bonds and computes for each redelegation bond how much is left after slashing. The set of slashes applied includes the set set of slashes computed before and any slash of the source validator of the redelegation such that (i) the redelegation slashing window includes the misbehaving epoch, and (ii) the redelegation bond was contributing to the source validator when this misbehaved. Once this is computed, the amount is added to `amount_after_slashing`.
+   - If some of the tokens were redelegated, then the function iterates over all redelegations. For each redelegation, it iterates over the redelegation bonds and computes for each redelegation bond how much is left after slashing. The set of slashes applied includes the set of slashes computed before and any slash of the source validator of the redelegation such that (i) the redelegation slashing window includes the misbehaving epoch, and (ii) the redelegation bond was contributing to the source validator when this misbehaved. Once this is computed, the amount is added to `amount_after_slashing`.
    - It sets the associated `redelegated_unbonds` entry to 0 to register that those redelegated tokens have been withdrawn.
 3. It transfers `amount_after_slashing` from the PoS account to the delegator's account.
 4. It finally updates `unbonds` to register that the unbonds have been withdrawn.
@@ -453,9 +453,9 @@ The `withdraw` function withdraws all tokens unbonded by a delegator `delegator_
 func withdraw(validator_address, delegator_address)
 {
   var delunbonds = {<start,end,amount> | amount = unbonds[delegator_address][validator_address].deltas[(start, end)] > 0 && end <= cur_epoch }
-  //substract any pending slash before withdrawing
+  // subtract any pending slash before withdrawing
   forall (<start,end,amount> in delunbonds) do
-    //retrieve redelegation record
+    // retrieve redelegation record
     var number_redelegations = redelegated_unbonds[delegator_address][validator_address][(start, end)].size()
     var redelegated_amount = 0
     if number_redelegations > 0 then
@@ -475,12 +475,12 @@ func withdraw(validator_address, delegator_address)
                                                               start - pipeline_length - unbonding_length <= slash.epoch < start &&
                                                               red_bond_start <= slash.epoch}
           amount_after_slashing += compute_amount_after_slashing(final_set_slashes, red_bond_amount)
-        //manage redelegation records
+        // manage redelegation records
         redelegated_unbonds[delegator_address][validator_address][(start, end)][redelegation_validator][red_bond_start] = 0
 
     balance[delegator_address] += amount_after_slashing
     balance[pos] -= amount_after_slashing
-    //remove unbond
+    // remove unbond
     unbonds[delegator_address][validator_address].deltas[(start,end)] = 0
 
 }
@@ -495,7 +495,7 @@ func compute_amount_after_slashing(set_slashes, amount) {
   var computed_amounts = {}
     var updated_amount = amount
     forall (slash in set_slashes in slash.epoch order) do
-      //Update amount with slashes that happened more than `unbonding_length` before this slash
+      // Update amount with slashes that happened more than `unbonding_length` before this slash
       forall (slashed_amount in computed_amounts s.t. slashed_amount.epoch + unbonding_length < slash.epoch) do
         updated_amount -= slashed_amount.amount
         computed_amounts = computed_amounts \ {slashed_amount}
@@ -522,16 +522,16 @@ The function `new_evidence` is called when a new infraction is submitted. The fu
 */
 func new_evidence(evidence)
 {
-  //create slash
+  // create slash
   var total_staked = read_epoched_field(validators[evidence.validator].total_deltas, evidence.epoch, 0)
   var slash = Slash{epoch: evidence.epoch, validator: evidence.validator, rate: 0, stake_fraction: compute_stake_fraction(evidence.type, total_staked)}
-  //enqueue slash (Step 1.1 of cubic slashing)
+  // enqueue slash (Step 1.1 of cubic slashing)
   append(enqueued_slashes[evidence.epoch + unbonding_length], slash)
-  //jail validator (Step 1.2 of cubic slashing)
+  // jail validator (Step 1.2 of cubic slashing)
   validators[validator_address].jail_record = JailRecord{is_jailed: true, epoch: cur_epoch+1}
   remove_validator_from_sets(validator_address, 1)
   update_total_voting_power(1)
-  //freeze validator to prevent delegators from altering their delegations (Step 1.3 of cubic slashing)
+  // freeze validator to prevent delegators from altering their delegations (Step 1.3 of cubic slashing)
   freeze_validator(validator_address)
 }
 ```
@@ -560,12 +560,12 @@ end_of_epoch()
   // iterate over all slashes for infractions within (-1,+1) epochs range (Step 2.1 of cubic slashing)
   var set_slashes = {s | s in enqueued_slashes[epoch] && cur_epoch-1 <= epoch <= cur_epoch+1}
   // calculate the slash rate (Step 2.2 of cubic slashing)
-  var3 rate = compute_final_rate(set_slashes)
+  var rate = compute_final_rate(set_slashes)
 
   var set_validators = {val | val = slash.validator && slash in enqueued_slashes[cur_epoch]}
   forall (validator_address in set_validators) do
     forall (slash in {s | s in enqueued_slashes[cur_epoch] && s.validator == validator_address}) do
-      //set the slash on the now "finalized" slash amount in storage (Step 2.3 of cubic slashing)
+      // set the slash on the now "finalized" slash amount in storage (Step 2.3 of cubic slashing)
       slash.rate = rate
       append(slashes[validator_address], slash)
       var total_staked = read_epoched_field(validators[validator_address].total_deltas, slash.epoch, 0)
@@ -584,11 +584,11 @@ end_of_epoch()
         if total_amount > 0 then 
           slash_validator(dest_validators, slash, total_amount, validator_address)
 
-    //unfreeze the validator (Step 2.5 of cubic slashing)
-    //this step is done in advance when the evidence is found
-    //by setting validators[validator_address].frozen[cur_epoch+unbonding_length+1]=false
-    //note that this index could have been overwritten if more evidence for the same validator
-    //where found since then
+    // unfreeze the validator (Step 2.5 of cubic slashing)
+    // this step is done in advance when the evidence is found
+    // by setting validators[validator_address].frozen[cur_epoch+unbonding_length+1]=false
+    // note that this index could have been overwritten if more evidence for the same validator
+    // where found since then
   cur_epoch = cur_epoch + 1
 }
 ```
@@ -606,8 +606,8 @@ The `slash_validator` function is called by the `end_of_epoch` function for a gi
 func slash_validator(validator_address, slash, staked_amount, src_validator)
 {
   var total_unbonded = 0
-  //find the total unbonded from the slash epoch up to the current epoch first
-  //a..b notation determines an integer range: all integers between a and b inclusive
+  // find the total unbonded from the slash epoch up to the current epoch first
+  // a..b notation determines an integer range: all integers between a and b inclusive
   forall (epoch in slash.epoch+1..cur_epoch) do
     if (src_validator == "") then
       total_unbonded += compute_total_unbonded(validator_address, slash, epoch)
@@ -643,14 +643,14 @@ The function computes `total_unbonded` in two steps: first considers exclusively
 ```go
 func compute_total_unbonded(validator_address, slash, epoch){
   var total_unbonded = 0
-  //select the epochs (start_epochs) at which bonds contributing to the misbehaving validator
-  //were unbonded at epoch
+  // select the epochs (start_epochs) at which bonds contributing to the misbehaving validator
+  // were unbonded at epoch
   var start_epochs = { start | start in validators[validator_address].total_unbonded[epoch].keys() &&
                                validators[validator_address].total_unbonded[epoch][start] > 0 &&
                                start <= slash.epoch }
-  //add those tokens to total_unbonded after slashing
+  // add those tokens to total_unbonded after slashing
   forall (start in start_epochs)
-    //the set of slashes only includes those that were processed before slash.epoch: s.epoch + unbonding_length < slash.epoch
+    // the set of slashes only includes those that were processed before slash.epoch: s.epoch + unbonding_length < slash.epoch
     var set_slashes = {s | s in slashes[validator_address] &&
                        start <= s.epoch &&
                        s.epoch + unbonding_length < slash.epoch }
@@ -660,10 +660,10 @@ func compute_total_unbonded(validator_address, slash, epoch){
     var set_slashes = {s | s in slashes[validator_address] &&
                        red_start <= s.epoch &&
                        s.epoch + unbonding_length < slash.epoch }
-    //iterate over all redelegated tokens that were unbonded at epoch and that were contributing to the misbehaving validators stake at slash.epoch
+    // iterate over all redelegated tokens that were unbonded at epoch and that were contributing to the misbehaving validators stake at slash.epoch
     forall (let [red_bond_start, red_bond_amount] of redelegation_bonds s.t. red_bond_amount > 0) do
-      //apply the set of slashes including those that were processed before slash.epoch: s.epoch + unbonding_length < slash.epoch and that
-      //were not processed when the redelegation ocurred: red_start - pipeline_length - unbonding_length <= s.epoch < red_start
+      // apply the set of slashes including those that were processed before slash.epoch: s.epoch + unbonding_length < slash.epoch and that
+      // were not processed when the redelegation ocurred: red_start - pipeline_length - unbonding_length <= s.epoch < red_start
       var final_set_slashes = set_slashes \union {s | s in slashes[redelegation_validator] &&
                                                     red_start - pipeline_length - unbonding_length <= s.epoch < red_start &&
                                                     s.epoch + unbonding_length < slash.epoch &&
@@ -683,13 +683,13 @@ The function computes `total_unbonded` in as follows:
 ```go
 func compute_total_unbonded_redelegated(validator_address, src_validator, slash, epoch){
   var total_unbonded = 0
-  //only consider unbonded tokens that were redelegated by the misbehaving validator
+  // only consider unbonded tokens that were redelegated by the misbehaving validator
   var redelegations = validators[validator_address].total_unbonded_redelegated[epoch].entries()
   forall (let [(red_start, redelegation_validator), redelegation_bonds] of redelegations s.t. redelegation_validator == src_validator &&
                                                                                               red_start - unbonding_length - pipeline_length <= slash.epoch < red_start) do
     forall (let [red_bond_start, red_bond_amount] of redelegation_bonds s.t. red_bond_start <= slash.epoch && red_bond_amount > 0) do
-      //apply any slash to red_bond_amount processed before slash.epoch and that was not already applied when the redelegation was created
-      //TODO: check that this set is not always empty
+      // apply any slash to red_bond_amount processed before slash.epoch and that was not already applied when the redelegation was created
+      // TODO: check that this set is not always empty
       var set_slashes = {s | s in slashes[validator_address] &&
                              red_start - unbonding_length - pipeline_length <= s.epoch &&
                              s.epoch + unbonding_length < slash.epoch}
@@ -700,7 +700,7 @@ func compute_total_unbonded_redelegated(validator_address, src_validator, slash,
 ```
 
 ```go
-//Cubic slashing function
+// Cubic slashing function
 compute_final_rate(slashes)
 {
   var voting_power_fraction = 0
@@ -763,11 +763,11 @@ func update_voting_power(validator_address, offset)
   var epochs = {epoch | cur_epoch+offset <= epoch <= cur_epoch+unbonding_length &&
                         (epoch > cur_epoch+offset => validators[validator_address].voting_power[epoch] != ⊥)}
   forall (epoch in epochs) do
-    //compute bonds from total_deltas 
+    // compute bonds from total_deltas 
     var bonds = read_epoched_field(validators[validator_address].total_deltas, epoch, 0)
-    //compute the new voting power
+    // compute the new voting power
     var power_after = votes_per_token*bonds
-    //update voting power and return it
+    // update voting power and return it
     validators[validator_address].voting_power[epoch] = power_after
     return power_after
 }
@@ -800,26 +800,26 @@ func update_validator_sets(validator_address, offset)
     power_before = get(sets.active U sets.inactive, validator_address).voting_power
     power_after = read_epoched_field(validators[validator_address].voting_power, epoch, 0)
     if (power_before >= max_inactive.voting_power) then
-      //if active but it loses power below the max_inactive then move validator to inactive
-      //and promote max_inactive
+      // if active but it loses power below the max_inactive then move validator to inactive
+      // and promote max_inactive
       if (power_after < max_inactive.voting_power) then
         remove(sets.active, validator_address)
         add(sets.active, max_inactive)
         remove(sets.inactive, max_inactive.validator)
         add(sets.inactive, WeightedValidator{validator: validator_address, voting_power: power_after})
-      //if active and its change in power does not degrade it to inactive, then update its voting power
+      // if active and its change in power does not degrade it to inactive, then update its voting power
       else
         remove(sets.active, validator_address)
         add(sets.active, WeightedValidator{validator: validator_address, voting_power: power_after})
     else
-      //if inactive and gains power above the min_active, then insert into active and
-      //degrade min_active 
+      // if inactive and gains power above the min_active, then insert into active and
+      // degrade min_active 
       if (power_after > min_active.voting_power) then
         remove(sets.inactive, validator_address)
         add(sets.inactive, min_active)
         remove(sets.active, min_active.validator)
         add(sets.active, WeightedValidator{validator: validator_address, voting_power: power_after})
-      //if inactive and its change in power does not promote it to active, then update its voting power
+      // if inactive and its change in power does not promote it to active, then update its voting power
       else
         remove(sets.inactive, validator_address)
         add(sets.inactive, WeightedValidator{validator: validator_address, voting_power: power_after})
@@ -835,7 +835,7 @@ freeze_validator(validator_address)
   forall (epoch in epochs) do
     var total = read_epoched_field(validators[validator_address].frozen, epoch, false)
     validators[validator_address].frozen[epoch] = true
-  //schedule when to unfreeze the validator: after processing the enqueued slash
+  // schedule when to unfreeze the validator: after processing the enqueued slash
   validators[validator_address].frozen[cur_epoch+unbonding_length+1] = false
 }
 ```
