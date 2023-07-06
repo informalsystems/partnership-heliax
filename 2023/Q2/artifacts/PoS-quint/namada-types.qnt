@@ -6,6 +6,8 @@
 
 module types {
 
+  import Dec.* from "./dec"
+
   // ****************************************************************************
   // Data Types
   // *************************************************************************
@@ -152,5 +154,11 @@ module types {
 
   // Cubic offset
   pure val CUBIC_OFFSET: int = 1
+
+  // Slash rate duplicate vote
+  pure val DUPLICATE_RATE: Dec = (1, 5)
+
+  // Slash rate light client attack
+  pure val LIGHT_RATE: Dec = (1, 5)
 
 }
