@@ -613,6 +613,40 @@ module namada {
       }
     }
 
+    // State initialization: assumes that users start with some initial balance.
+    // NOTE(Tomas): This is a parametrized version of `action init`.
+    // TODO(Tomas): Add genesis stake to validators.
+    action initWithParams(
+      pipelineOffset: int,
+      unbondingOffset: int,
+      cubicOffset: int,
+      initBalance: int,
+      users: Set[str],
+      // Added suffix 'Arg' because there's a `validators` state variable already
+      validatorsArg: Set[str]
+    ): bool = all {
+      val initEpoch = unbondingOffset + cubicOffset
+      all {
+        delegators' = users.mapBy(user => {balance: initBalance,
+                                          bonded: validatorsArg.mapBy(x => Map()),
+                                          unbonded: validatorsArg.mapBy(x => Map())}),
+        validators' = validatorsArg.mapBy(validator => {address: validator,
+                                                     stake: 0.to(initEpoch+pipelineOffset).mapBy(e => 0),
+                                                     totalUnbonded: 0.to(initEpoch+pipelineOffset).mapBy(e => Map()),
+                                                     totalBonded: 0.to(initEpoch+pipelineOffset).mapBy(e => 0),
+                                                     slashes: List(),
+                                                     frozen: 0}),
+        pos' = {posAccount: 0,
+                slashPool: 0,
+                epoch: initEpoch,
+                counterTxs: 0,
+                counterInfractions: 0,
+                enqueuedSlashes: (initEpoch-cubicOffset).to(initEpoch+cubicOffset+unbondingOffset).mapBy(e => Set())},
+        lastTx' = { tag: "Init", result: true, user: "", validator: "", amount: 0},
+        nextInfractionEpoch' = validatorsArg.mapBy(validator => 0)
+      }
+    }
+
     /*
     * Execution of the state machine.
     * 1. Pick a random amount from 0 to MAX_UINT, a user, a validator, and an epoch between
