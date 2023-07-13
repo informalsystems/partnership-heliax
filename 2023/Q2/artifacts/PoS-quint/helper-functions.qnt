@@ -609,22 +609,34 @@ module helperFunctions {
       assert(computeRecentTotalUnbonded(8, Map(4 -> 10, 7 -> 20)) == 0),
     }
 
-    // Returns the slahs rate depending of the type of infraction
+    // The function minSlashRate returns a slash rate depending on the type of infraction.
+    // - @param infraction a string identifying the type of infraction.
+    // - @returns a Dec representing the slash rate
     pure def minSlashRate(infraction: str): Dec = {
       if (infraction == "duplicate_vote") DUPLICATE_RATE else LIGHT_RATE
     }
 
-    // Computes a slash rate based on a set of slashes
+    // The function computeFinalRate computes a slash rate based on a set of slashes
     // - @param setSlashes a set of slashes
-    // - @returns an integer represting the slash rate
+    // - @returns an integer representing the slash rate
     pure def computeFinalRate(setInfractions: Set[Infraction]): int = {
       1
     } 
 
-        // Computes for a given validator and a slash how it much should be slashed at all epochs between the current epoch (curEpoch) + 1 and the current epoch + 1 + 
-    // PIPELINE_OFFSET, accounting for any tokens already unbonded.
+    // The slashValidator function computes for a given validator and a slash how much should be slashed at all epochs between the current
+    // epoch (curEpoch) + 1 and the current epoch + 1 + PIPELINE_OFFSET, accounting for any tokens already unbonded.
+    // - @param validator the misbehaving validator.
+    // - @param stakes a map from epoch to validator stake. This is used to compute slashableStake.
+    // - @param curEpoch the current epoch.
+    // - @param infractionStake the validator's stake at the misbehaving epoch.
+    // - @param slashes list of slashes already processed slashes of the misbehaving validator.
+    // - @param totalUnbonded a map from epoch to unbonded tokens.
+    // - @param totalRedelegatedUnbonded a map from epoch to unbonded redelegated tokens.
+    // - @param totalBonded a map from epoch to amount of bonded tokens.
+    // - @param finalRate the rate of the slash being processed.
+    // - @param slashedAmountsMap a map from epoch to already processed slash amounts.
+    // - @returns a map that adds any newly processed slash amount to slashedAmountsMap.
     pure def slashValidator(validator: Address,
-                            initMap: Epoch -> int,
                             stakes: Epoch -> int,
                             curEpoch: Epoch,
                             infractionStake: int,
@@ -632,11 +644,12 @@ module helperFunctions {
                             totalUnbonded: Epoch -> Epoch -> int,
                             totalRedelegatedUnbonded: Epoch -> Epoch -> RedelegatedBondsMap,
                             totalBonded: Epoch -> int,
-                            finalRate: int): Epoch -> int = {
+                            finalRate: int,
+                            slashedAmountsMap: Epoch -> int): Epoch -> int = {
       val infractionEpoch = curEpoch - slashProcessingDelay
       val initTotalUnbonded = (infractionEpoch+1).to(curEpoch).fold(0, (sum, e) => sum + computeTotalUnbonded(validator, infractionEpoch, slashes, totalUnbonded.get(e), totalRedelegatedUnbonded.get(e)))
       val initBalanceBonds = (infractionEpoch+1).to(curEpoch).fold(0, (sum, e) => sum +(totalBonded.get(e) - computeRecentTotalUnbonded(infractionEpoch, totalUnbonded.get(e))))
-      val result = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).fold((initTotalUnbonded, initBalanceBonds, initMap), (acc, e) => val updatedTotalUnbonded = acc._1 + computeTotalUnbonded(validator, infractionEpoch, slashes, totalUnbonded.get(e), totalRedelegatedUnbonded.get(e))
+      val result = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).fold((initTotalUnbonded, initBalanceBonds, slashedAmountsMap), (acc, e) => val updatedTotalUnbonded = acc._1 + computeTotalUnbonded(validator, infractionEpoch, slashes, totalUnbonded.get(e), totalRedelegatedUnbonded.get(e))
                                                                                                                               val updatedBalanceBonds = acc._2 + (totalBonded.get(e) - computeRecentTotalUnbonded(infractionEpoch, totalUnbonded.get(e)))
                                                                                                                               val slashedAmount = (infractionStake - updatedTotalUnbonded) * finalRate
                                                                                                                               val currentStake = stakes.get(e) - acc._3.get(e)
@@ -645,6 +658,12 @@ module helperFunctions {
       result._3
     }
 
+    // The function hasRedelegation checks whether a map of redelegations contains a given redelegation.
+    // - @param mapRedelegations a map of redelegations from epoch to RedelegatedBondsMap
+    // - @param redBondStart the epoch at which the redelegated bonds started contributing the destination validator. We also say the end of the redelegation.
+    // - @param validator the address of the source validator
+    // - @param bondStart the epoch at which the tokens startted contributing at the source validator
+    // - @returns true if the mapRedelegations contains the redelegation defined by redBondStart, validator and bondStart; it returns false otherwise.
     pure def hasRedelegation(mapRedelegations: Epoch -> RedelegatedBondsMap, redBondStart: Epoch, validator: Address, bondStart: Epoch): bool = {
       if (mapRedelegations.has(redBondStart))
         if (mapRedelegations.get(redBondStart).has(validator)) 
@@ -654,6 +673,29 @@ module helperFunctions {
       else false
     }
 
+    run hasRedelegationTest = {
+      val mapRedelegations = Map(4 -> Map("alice" -> Map(2 -> 6, 3 -> 7)), 6 -> Map("bob" -> Map(1 -> 8)))
+      all {
+        assert(hasRedelegation(Map(), 4, "alice", 3) == false),
+        assert(hasRedelegation(mapRedelegations, 4, "alice", 3) == true),
+        assert(hasRedelegation(mapRedelegations, 4, "alice", 4) == false),
+        assert(hasRedelegation(mapRedelegations, 4, "bob", 3) == false),
+        assert(hasRedelegation(mapRedelegations, 6, "alice", 3) == false),
+      }
+    }
+
+    // The function slashRedelegation computes how much is can be slashed from a redelegated bond considering that the bond may have been completely or partially 
+    // unbonded and that the source validator may have misbehaved already within the redelegation slashing window.
+    // - @param amount the amount of tokens of the redelegated bond.
+    // - @param bondStart the epoch at which the redelegated tokens started contributing to the source validator's stake.
+    // - @param redBondStart the epoch at which the redelegated tokens started contributing to the destination validator's stake.
+    // - @param srcValidator the source validator.
+    // - @param curEpoch the current epoch.
+    // - @param slashes a list of slashes of the source validator.
+    // - @param totalRedelegatedUnbonded a map of unbonded redelegated tokens at the destination validator.
+    // - @param finalRate the rate of the slash being processed.
+    // - @param slashedAmountsMap a map from epoch to already processed slash amounts.
+    // - @returns a map that adds any newly processed slash amount to slashedAmountsMap.
     pure def slashRedelegation(amount: int,
                                bondStart: Epoch,
                                redBondStart: Epoch,
@@ -668,11 +710,11 @@ module helperFunctions {
                                                                                    else sum + totalRedelegatedUnbonded.get(e).get(redBondStart).get(srcValidator).get(bondStart))
       val result = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).fold((initTotalUnbonded, slashedAmountsMap), (acc, e) => val updatedTotalUnbonded = if (not(totalRedelegatedUnbonded.get(e).hasRedelegation(redBondStart, srcValidator, bondStart))) acc._1
                                                                                                                                                  else acc._1 + totalRedelegatedUnbonded.get(e).get(redBondStart).get(srcValidator).get(bondStart)
-                                                                                                                      val slashAmount = val listSlashes = slashes.select(s => inRedelegationSlashingWindow(s.epoch, startRedelegationFromEnd(e), e) and
+                                                                                                                      val slashAmount = val listSlashes = slashes.select(s => inRedelegationSlashingWindow(s.epoch, startRedelegationFromEnd(redBondStart), redBondStart) and
                                                                                                                                                                               s.epoch + slashProcessingDelay < infractionEpoch and
                                                                                                                                                                               bondStart <= s.epoch)
                                                                                                                                         applyListSlashes(listSlashes, amount - updatedTotalUnbonded) * finalRate
-                                                                                                                      val slashableStake = val listSlashes = slashes.select(s => inRedelegationSlashingWindow(s.epoch, startRedelegationFromEnd(e), e) and
+                                                                                                                      val slashableStake = val listSlashes = slashes.select(s => inRedelegationSlashingWindow(s.epoch, startRedelegationFromEnd(redBondStart), redBondStart) and
                                                                                                                                                                                  bondStart <= s.epoch)
                                                                                                                                            applyListSlashes(listSlashes, amount - updatedTotalUnbonded)
                                                                                                                       (updatedTotalUnbonded, acc._2.set(e, acc._2.get(e) + min(slashAmount, slashableStake))))
@@ -683,10 +725,31 @@ module helperFunctions {
       val totalRedelegatedUnbonded = Map(10 -> Map(), 11 -> Map(), 12 -> Map(), 13 -> Map(10 -> Map("alice" -> Map(7 -> 2))), 14 -> Map(), 15 -> Map(), 16 -> Map(), 9 -> Map())
       val slashedAmountsMap = Map(15 -> 0, 16 -> 0)
       all {
-        assert(slashRedelegation(7, 7, 10, "alice", 14, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 5, 16 -> 5))
+        assert(slashRedelegation(7, 7, 10, "alice", 14, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 5, 16 -> 5)),
+        assert(slashRedelegation(7, 7, 11, "alice", 14, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 7, 16 -> 7)),
+        assert(slashRedelegation(7, 7, 10, "alice", 14, [], totalRedelegatedUnbonded, 1,  Map(15 -> 2, 16 -> 3)) == Map(15 -> 7, 16 -> 8)),
+        // existing slash processed before the one being computed
+        assert(slashRedelegation(7, 7, 10, "alice", 14, [{epoch: 8, rate: 1}], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0)),
+        // existing slash not processed before the one being computed
+        assert(slashRedelegation(7, 7, 10, "alice", 14, [{epoch: 9, rate: 1}], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0)),
+        // existing slashes one processed before the one being computed and one not
+        assert(slashRedelegation(7, 7, 10, "alice", 14, [{epoch: 8, rate: 1}, {epoch: 9, rate: 1}], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0)),
       }
     }
 
+    // In the context of a redelegation, the slashValidatorRedelegation function computes how much a validator (the destination validator of the redelegation) should be slashed
+    // due to the misbehaving of a second validator (the source validator of the redelegation). The function computes how much the validator whould be slashed at all epochs
+    // between the current epoch (curEpoch) + 1 and the current epoch + 1 + PIPELINE_OFFSET, accounting for any tokens of the redelegation already unbonded.
+    // - @param srcValidator the source validator
+    // - @param curEpoch the current epoch
+    // - @param redelegations a map from pair of epochs to int that includes all the redelegations from the source validator to the destination validator. 
+    //          - The first epoch in the pair is the epoch at which the bond started at the source validator.
+    //          - The second epoch in the pair is the epoch at which the redelegation started (the epoch at which was issued).
+    // - @param slashes a list of slashes of the source validator.
+    // - @param totalRedelegatedUnbonded a map of unbonded redelegated tokens at the destination validator.
+    // - @param finalRate the rate of the slash being processed.
+    // - @param slashedAmountsMap a map from epoch to already processed slash amounts.
+    // - @returns a map that adds any newly processed slash amount to slashedAmountsMap.
     pure def slashValidatorRedelegation(srcValidator: Address,
                                         curEpoch: Epoch,
                                         redelegations: (Epoch, Epoch) -> int,
@@ -715,7 +778,12 @@ module helperFunctions {
       val totalRedelegatedUnbonded = Map(10 -> Map(), 11 -> Map(), 12 -> Map(), 13 -> Map(10 -> Map("alice" -> Map(7 -> 2))), 14 -> Map(), 15 -> Map(), 16 -> Map(), 9 -> Map())
       val slashedAmountsMap = Map(15 -> 0, 16 -> 0)
       all {
-        assert(slashValidatorRedelegation("alice", 14, redelegations, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 5, 16 -> 5))
+        assert(slashValidatorRedelegation("alice", 14,  Map(), [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0)),
+        assert(slashValidatorRedelegation("alice", 14,  Map(), [], Map(), 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0)),
+        assert(slashValidatorRedelegation("alice", 14,  Map((6, 8) -> 7), [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 7, 16 -> 7)),
+        assert(slashValidatorRedelegation("alice", 14, redelegations, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 5, 16 -> 5)),
+        assert(slashValidatorRedelegation("alice", 14, redelegations, [], totalRedelegatedUnbonded, 1, Map(15 -> 2, 16 -> 3)) == Map(15 -> 7, 16 -> 8)),
+        assert(slashValidatorRedelegation("alice", 14, redelegations, [{epoch: 8, rate: 1}], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0))
       }
     }
 }

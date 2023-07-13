@@ -165,11 +165,18 @@ module namada {
       }
     }
 
+    // The function redelegate is called when a user wants to redelegate tokens from a source validator to a destination validator.
+    // 1. The function first attempts to unbond the desired amount from the source validator.
+    // 2. It only proceeds if the redelegation is not a chain redelegation and the unbonding succeeded.
+    // 3. It updates the delegator's variables bonded and redelegatedBonded to register that the target amount of tokens are now
+    //    bonded to the destination validator.
+    // 4. It registers the redelegation in the source validator's outgoingRedelegations variable.
+    // 5. It updates the destinations validator stake, registers the redelegation in its incomingRedelegations and updates its totalBonded variable.
     pure def redelegate(delegator: DelegatorState, allValidators: Address -> ValidatorState, srcAddress: Address, destAddress: Address, posState: PosState, amount: int): ResultRedelegationTx = {
       val srcValidator = allValidators.get(srcAddress)
       val destValidator = allValidators.get(destAddress)
       val endEpochRedelegation = srcValidator.incomingRedelegations.get(delegator.address)
-      val isNotChained = endEpochRedelegation >=0 implies posState.epoch >= endEpochRedelegation + UNBONDING_OFFSET + CUBIC_OFFSET
+      val isNotChained = endEpochRedelegation >=0 implies posState.epoch >= endEpochRedelegation + slashProcessingDelay
       val resultUnbond = unbond(delegator, srcAddress, allValidators, posState, amount, true)
       if (isNotChained and resultUnbond.result.success == true) {
         val newDelegatorState = resultUnbond.result.delegator
@@ -202,7 +209,6 @@ module namada {
                           validatorsState: Address -> ValidatorState): Address -> Epoch -> int = { 
       val infractionEpoch = curEpoch - slashProcessingDelay
       val updatedSlashedAmountMap = slashedAmountMap.set(misbehavingValidator, slashValidator(misbehavingValidator,
-                                                                                              slashedAmountMap.get(misbehavingValidator),
                                                                                               (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => validatorsState.get(misbehavingValidator).stake.get(e)),
                                                                                               curEpoch,
                                                                                               validatorsState.get(misbehavingValidator).stake.get(infractionEpoch),
@@ -210,7 +216,8 @@ module namada {
                                                                                               validatorsState.get(misbehavingValidator).totalUnbonded,
                                                                                               validatorsState.get(misbehavingValidator).totalRedelegatedUnbonded,
                                                                                               validatorsState.get(misbehavingValidator).totalBonded,                                               
-                                                                                              slashRate))
+                                                                                              slashRate,
+                                                                                              slashedAmountMap.get(misbehavingValidator)))
       val outgoingRedelegations = validatorsState.get(misbehavingValidator).outgoingRedelegations
       outgoingRedelegations.keys().fold(updatedSlashedAmountMap, (acc, destValidator) => acc.set(destValidator, slashValidatorRedelegation(misbehavingValidator,
                                                                                                                                            curEpoch,             
