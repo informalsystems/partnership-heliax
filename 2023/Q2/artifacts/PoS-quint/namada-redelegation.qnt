@@ -202,6 +202,14 @@ module namada {
       }
     }
     
+    // The function processSlash processes a slash by (i) slashing the misbehaving validator; and (ii) any validator to which it has redelegated some tokens and the slash misbehaving epoch
+    // is wihtin the redelegation slashing window.
+    // - @param misbehavingValidator the misbehaving validator.
+    // - @param slashRate the slash rate.
+    // - @param curEpoch the current epoch.
+    // - @param slashedAmountsMap a map from validator address to a map from epoch to already processed slash amounts.
+    // - @param validatorsState a map from validatro address to validator's state.
+    // - @returns a map that adds any newly processed slash amount of any involved validator to slashedAmountsMap.
     pure def processSlash(misbehavingValidator: Address,
                           slashRate: int,
                           curEpoch: Epoch,
