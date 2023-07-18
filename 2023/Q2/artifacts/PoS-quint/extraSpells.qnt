@@ -9,6 +9,8 @@ module extraSpells {
 
   import basicSpells.* from "./basicSpells"
 
+  pure def printVariable(name: str, variable: a): bool = true
+
   /// Compute the minimum of two integers.
   ///
   /// - @param __i first integer

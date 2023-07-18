@@ -193,8 +193,8 @@ module namada {
         val updatedSrcValidator = newSrcValidatorState.with("outgoingRedelegations", newSrcValidatorState.outgoingRedelegations.set(destAddress, updatedOutgoingRedelegations))
         val updatedDestValidator = destValidator.with("stake", destValidator.stake.set(posState.epoch + PIPELINE_OFFSET,
                                                                                        destValidator.stake.get(posState.epoch + PIPELINE_OFFSET) + amountAfterSlashing))
-                                                .with("totalBonded", destValidator.totalBonded.set(posState.epoch + PIPELINE_OFFSET,
-                                                                                                   destValidator.totalBonded.get(posState.epoch + PIPELINE_OFFSET) + amountAfterSlashing))
+                                                .with("totalRedelegatedBonded", destValidator.totalRedelegatedBonded.set(posState.epoch + PIPELINE_OFFSET, mergeRedelegatedBondsMap(destValidator.totalRedelegatedBonded.get(posState.epoch + PIPELINE_OFFSET),
+                                                                                                                                                                                    Map(srcAddress -> resultUnbond.resultSlashing.epochMap))))
                                                 .with("incomingRedelegations", destValidator.incomingRedelegations.set(delegator.address, posState.epoch + PIPELINE_OFFSET))      
         {success: true, delegator: updatedDelegator, srcValidator: updatedSrcValidator, destValidator: updatedDestValidator, posState: posState}
       } else {
@@ -214,18 +214,22 @@ module namada {
                           slashRate: int,
                           curEpoch: Epoch,
                           slashedAmountMap: Address -> Epoch -> int,
-                          validatorsState: Address -> ValidatorState): Address -> Epoch -> int = { 
+                          validatorsState: Address -> ValidatorState,
+                          slashes: Address -> List[Slash]): Address -> Epoch -> int = { 
       val infractionEpoch = curEpoch - slashProcessingDelay
-      val updatedSlashedAmountMap = slashedAmountMap.set(misbehavingValidator, slashValidator(misbehavingValidator,
-                                                                                              (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => validatorsState.get(misbehavingValidator).stake.get(e)),
-                                                                                              curEpoch,
-                                                                                              validatorsState.get(misbehavingValidator).stake.get(infractionEpoch),
-                                                                                              validatorsState.keys().mapBy(v => validatorsState.get(v).slashes),
-                                                                                              validatorsState.get(misbehavingValidator).totalUnbonded,
-                                                                                              validatorsState.get(misbehavingValidator).totalRedelegatedUnbonded,
-                                                                                              validatorsState.get(misbehavingValidator).totalBonded,                                               
-                                                                                              slashRate,
-                                                                                              slashedAmountMap.get(misbehavingValidator)))
+      val resultSlashValidator = slashValidator(misbehavingValidator,
+                                                (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => validatorsState.get(misbehavingValidator).stake.get(e)),
+                                                curEpoch,
+                                                validatorsState.get(misbehavingValidator).stake.get(infractionEpoch),
+                                                slashes,
+                                                //validatorsState.keys().mapBy(v => validatorsState.get(v).slashes),
+                                                validatorsState.get(misbehavingValidator).totalUnbonded,
+                                                validatorsState.get(misbehavingValidator).totalRedelegatedUnbonded,
+                                                validatorsState.get(misbehavingValidator).totalBonded,
+                                                validatorsState.get(misbehavingValidator).totalRedelegatedBonded,                                            
+                                                slashRate,
+                                                slashedAmountMap.get(misbehavingValidator))
+      val updatedSlashedAmountMap = slashedAmountMap.set(misbehavingValidator, resultSlashValidator)
       val outgoingRedelegations = validatorsState.get(misbehavingValidator).outgoingRedelegations
       outgoingRedelegations.keys().fold(updatedSlashedAmountMap, (acc, destValidator) => acc.set(destValidator, slashValidatorRedelegation(misbehavingValidator,
                                                                                                                                            curEpoch,             
@@ -249,11 +253,10 @@ module namada {
       val initMap = VALIDATORS.mapBy(v => (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 0))
       val infractionEpoch = posState.epoch - CUBIC_OFFSET - UNBONDING_OFFSET
       val slashPerValidator = posState.enqueuedSlashes.get(curEpoch).fold(Map(), (acc, slash) => acc.mapSafeSet(slash.validator, min(1, acc.getOrElse(slash.validator, 0) + finalRate)))
-      val mapValidatorSlash = slashPerValidator.keys().fold(initMap, (acc, validator) => processSlash(validator,
-                                                                                                      slashPerValidator.get(validator),
-                                                                                                      curEpoch,
-                                                                                                      acc,
-                                                                                                      validatorsState))
+      val slashesMap = VALIDATORS.mapBy(v => validatorsState.get(v).slashes)
+      val resultSlashing = slashPerValidator.keys().fold((initMap, slashesMap), (acc, validator) => (processSlash(validator, slashPerValidator.get(validator), curEpoch, acc._1, validatorsState, acc._2), 
+                                                                                                     acc._2.set(validator, acc._2.get(validator).append({epoch: infractionEpoch, rate: slashPerValidator.get(validator)}))))
+      val mapValidatorSlash = resultSlashing._1
       val updatedValidators = VALIDATORS.mapBy(v => validatorsState.get(v).with("stake",(curEpoch-UNBONDING_OFFSET-CUBIC_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).stake.get(e) -
                                                                                                                                                                               if (e >= curEpoch+1) mapValidatorSlash.get(v).get(e) else 0
                                                                                                                                                                              else validatorsState.get(v).stake.get(e-1) - mapValidatorSlash.get(v).get(e-1))) 
@@ -262,7 +265,9 @@ module namada {
                                                                           .with("totalRedelegatedUnbonded", (curEpoch-CUBIC_OFFSET-UNBONDING_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).totalRedelegatedUnbonded.get(e)
                                                                                                                                                                                                  else Map()))                                                                                                              
                                                                           .with("totalBonded", (curEpoch-CUBIC_OFFSET-UNBONDING_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).totalBonded.get(e)
-                                                                                                                                                                                    else 0))                                                                                                                                                                                  
+                                                                                                                                                                                    else 0))
+                                                                          .with("totalRedelegatedBonded", (curEpoch-CUBIC_OFFSET-UNBONDING_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).totalRedelegatedBonded.get(e)
+                                                                                                                                                                                               else Map()))                                                                                                                                                                                    
                                                                           .with("slashes", if (slashPerValidator.has(v)) validatorsState.get(v).slashes.append({epoch: infractionEpoch, rate: slashPerValidator.get(v)})
                                                                                            else validatorsState.get(v).slashes))
       //val totalAmountSlashed = slashPerValidator.keys().fold(0, (sum, validator) => sum + validatorsState.get(validator).stake.get(infractionEpoch)*slashPerValidator.get(validator))
@@ -405,7 +410,7 @@ module namada {
                                                                                                                               sum + bonds.keys().fold(0, (total, start) => total + bonds.get(start))) == validators.get(validator).stake.get(pos.epoch + PIPELINE_OFFSET))
 
     // Invariant 6: The total amount of tokens is constant.
-    val totalAmountTokensConstant = USERS.fold(0, (sum, user) => sum + delegators.get(user).balance) + pos.posAccount + pos.slashPool== size(USERS)*INIT_BALANCE
+    val totalAmountTokensConstant = USERS.fold(0, (sum, user) => sum + delegators.get(user).balance) + pos.posAccount + pos.slashPool == size(USERS)*INIT_BALANCE
 
     // Invariant 7: A validator's stake cannot become negative.
     val stakeGreaterZero = VALIDATORS.forall(validator =>
@@ -425,11 +430,10 @@ module namada {
                         boundedBalance
                   
     // All invariants without slash pool
+    // Due to the lack of slashing pool posAccountZero and noSlashingStakeEqualSumBonds do not hold
     val allInvariantsWithNoSlashPool = balanceGreaterZero and
                                        posAccountGreaterZero and
-                                       //posAccountZero and
                                        stakeEqualOrLessSumBonds and
-                                       //noSlashingStakeEqualSumBonds and
                                        totalAmountTokensConstant and
                                        stakeGreaterZero and
                                        boundedBalance
@@ -460,9 +464,10 @@ module namada {
                                                      stake: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => 0),
                                                      totalUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
                                                      totalRedelegatedUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
+                                                     totalRedelegatedBonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
                                                      totalBonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => 0),
                                                      incomingRedelegations: USERS.mapBy(user => -1),
-                                                     outgoingRedelegations: VALIDATORS.mapBy(x => Map()),
+                                                     outgoingRedelegations: VALIDATORS.setRemove(validator).mapBy(x => Map()),
                                                      slashes: List(),
                                                      frozen: 0}),
         pos' = {posAccount: 0,
@@ -496,7 +501,7 @@ module namada {
             actionUnbond(user, validator, amountUnbond),
             actionWithdraw(user, validator),
             actionEvidence(e, validator),
-            //actionRedelegate(user, validator, destValidator, amountUnbond),
+            actionRedelegate(user, validator, destValidator, amountUnbond),
             //allUnchanged
             actionFauxTransaction(user, validator, amountDelegate, amountUnbond, e)
         }
@@ -519,6 +524,7 @@ module namada {
                             stake: 0.to(UNBONDING_OFFSET).mapBy(e => 0),
                             totalUnbonded: 1.to(1+PIPELINE_OFFSET).mapBy(e => Map()),
                             totalRedelegatedUnbonded: 1.to(1+PIPELINE_OFFSET).mapBy(e => Map()),
+                            totalRedelegatedBonded: 1.to(1+PIPELINE_OFFSET).mapBy(e => Map()),
                             totalBonded: 1.to(1+PIPELINE_OFFSET).mapBy(e => 0),
                             incomingRedelegations: USERS.mapBy(user => -1),
                             outgoingRedelegations: VALIDATORS.mapBy(x => Map()),
@@ -648,6 +654,7 @@ module namada {
                                                      stake: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => if (validator=="alice" and e >= UNBONDING_OFFSET + CUBIC_OFFSET - 1) 200000 else 0),
                                                      totalUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
                                                      totalRedelegatedUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
+                                                     totalRedelegatedBonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
                                                      totalBonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => if (validator=="alice" and e==UNBONDING_OFFSET + CUBIC_OFFSET - 1) 200000 else 0),
                                                      incomingRedelegations: USERS.mapBy(user => -1),
                                                      outgoingRedelegations: VALIDATORS.mapBy(x => Map()),

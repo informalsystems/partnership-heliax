@@ -17,7 +17,15 @@ module types {
   // Represent epochs as integers
   type Epoch = int
 
+  // A map from source validator to a map of bonds: from bond starting epoch at the source validator to amount of tokens
   type RedelegatedBondsMap = Address -> Epoch -> int
+
+  type Redelegation = {
+    redBondStart: Epoch,
+    srcValidator: Address,
+    bondStart: Epoch,
+    amount: int
+  }
 
   type ModifiedRedelegation = {
     epoch: Epoch,
@@ -55,10 +63,14 @@ module types {
     // User's bonds: a map from validator to a map storing the tokens that the user has currently delegated to the validator
     // The latter maps bond starting epoch to amount of tokens
     bonded: Address -> Epoch -> int,
+    // User's bonds that come from redelegations: a map from validator to a map storing the redelegated tokens that the user has currently
+    //delegated to the validator. The latter maps bond starting epoch to a RedelegatedBondsMap (from source validator to a map of bonds from bond starting epoch at the source validator to amount of tokens)
     redelegatedBonded: Address -> Epoch -> RedelegatedBondsMap,
     // User's unbonds: a map from validator to a map storing the tokens that the user has unbonded (not yet withdrawn) from the validator
     // The latter maps the pair bond starting epoch and unbond ending epoch to amount of tokens
     unbonded: Address -> (Epoch, Epoch) -> int,
+    // User's unbonds that come from redelegations: a map from validator to a map storing the redelegtated tokens that the user has unbonded (not yet withdrawn)/
+    // The latter maps the pair bond starting epoch and unbond ending epoch to a RedelegatedBondsMap (from source validator to a map of bonds from bond starting epoch at the source validator to amount of tokens)
     redelegatedUnbonded: Address -> (Epoch, Epoch) -> RedelegatedBondsMap
   }
 
@@ -72,17 +84,35 @@ module types {
     slashes: List[Slash],
     // Keeps tracks of the epoch until which a validator is frozen
     frozen: Epoch,
-    // Each validator keeps track of unbonded tokens per epoch
+    // Each validator keeps track of the amount of tokens that have been unbonded at a given epoch.
     // totalUnbonded is a map from unbonding epoch to unbonded bonds
     // The unbonded bonds are tracked in a map from bond starting epoch to amount of tokens
     totalUnbonded: Epoch -> Epoch -> int,
+    // Each validator keeps track of the amount of redelegated tokens that have been unbonded at a given epoch.
+    // totalRedelegatedUnbonded is a map from unbonding epoch to unbonded redelegated bonds
+    // The unbonded redelegated bonds are tracked in a map from bond starting epoch at the validator to RedelegatedBondsMap.
+    // (from source validator to a map of bonds from bond starting epoch at the source validator to amount of tokens)
     totalRedelegatedUnbonded: Epoch -> Epoch -> RedelegatedBondsMap,
-    // Each validatro keeps track of bonded tokens per epoch
+    // Each validator keeps track of the amount of tokens bonded at a given epoch
     // totalBonded is a map from bond starting epoch to amount of bonded tokens
-    // It is used an the en of en epoch to compute how many tokens have been delegated
-    // to a validator after a given infraction epoch
+    // It is used an the end of an epoch to compute how many tokens have been delegated
+    // to a validator after a given infraction epoch.
     totalBonded: Epoch -> int,
+    // Each validator keeps track of the amount of redelegated tokens bonded at a given epoch.
+    // totalBonded is a map from bond starting epoch to RedelegatedBondsMap.
+    // (from source validator to a map of bonds from bond starting epoch at the source validator to amount of tokens)
+    // It is used an the end of an epoch to compute how many redelegated tokens have been delegated
+    // to a validator after a given infraction epoch.
+    totalRedelegatedBonded: Epoch -> RedelegatedBondsMap,
+    // Each validator keeps track of incoming redelegations.
+    // For each source validator, the validator keeps track the epoch at which the latest
+    // redelegation ends: when the redelegated tokens start contributing to the validator.
+    // This is used to prevent chain redelegations.
     incomingRedelegations: Address -> Epoch,
+    // Each validator keeps track of outgoing redelegations.
+    // For each destination validator, the validator keeps a map of redelegated tokens.
+    // The map uses a pair of epochs as key: bond starting epoch at the validator, redelegation starting epoch (when the redelagation was issued).
+    // This is used to slash destination validator when a slash for the validator is processed at the end of an epoch.
     outgoingRedelegations: Address -> (Epoch, Epoch) -> int
   }
 
