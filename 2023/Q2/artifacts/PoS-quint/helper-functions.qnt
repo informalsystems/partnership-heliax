@@ -694,6 +694,7 @@ module helperFunctions {
                                           slashes: List[Slash],
                                           totalRedelegatedUnbonded: Epoch -> Epoch -> RedelegatedBondsMap,
                                           balanceMap: Epoch -> int): Epoch -> int = {
+      // We should iterate in epoch increasing order. TODO: transform this into a list and use foldl.
       (redelegation.redBondStart).to(curEpoch+PIPELINE_OFFSET).fold((0, balanceMap), (acc, e) => val updatedTotalUnbonded = if (not(totalRedelegatedUnbonded.get(e).hasRedelegation(redelegation.redBondStart, redelegation.srcValidator, redelegation.bondStart))) acc._1
                                                                                                                             else acc._1 + totalRedelegatedUnbonded.get(e).get(redelegation.redBondStart).get(redelegation.srcValidator).get(redelegation.bondStart)
                                                                                                  if (e <= curEpoch) (updatedTotalUnbonded, acc._2)
@@ -780,6 +781,7 @@ module helperFunctions {
       val initBalanceBonds = (infractionEpoch+1).to(curEpoch).fold(0, (sum, e) => sum + (totalBonded.get(e) - computeRecentTotalUnbonded(infractionEpoch, totalUnbonded.get(e), totalRedelegatedUnbonded.get(e))))
       val zeroedBalanceRedelegatedBonds = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 0)
       val initBalanceRedelegatedBonds = (infractionEpoch+1).to(curEpoch).fold(zeroedBalanceRedelegatedBonds, (acc, e) => computeBalanceRedelegatedBonds(totalRedelegatedBonded.get(e), e, curEpoch, slashes, totalRedelegatedUnbonded, acc))
+      // We should iterate in epoch increasing order. TODO: transform this into a list and use foldl.
       val result = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).fold((initTotalUnbonded,
                                                                    initBalanceBonds,
                                                                    initBalanceRedelegatedBonds,
@@ -940,6 +942,7 @@ module helperFunctions {
       val infractionEpoch = curEpoch - slashProcessingDelay
       val initTotalUnbonded = (infractionEpoch+1).to(curEpoch).fold(0, (sum, e) => if (not(totalRedelegatedUnbonded.get(e).hasRedelegation(redBondStart, srcValidator, bondStart))) sum
                                                                                    else sum + totalRedelegatedUnbonded.get(e).get(redBondStart).get(srcValidator).get(bondStart))
+      // We should iterate in epoch increasing order. TODO: transform this into a list and use foldl.
       val result = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).fold((initTotalUnbonded, slashedAmountsMap), (acc, e) => val updatedTotalUnbonded = if (not(totalRedelegatedUnbonded.get(e).hasRedelegation(redBondStart, srcValidator, bondStart))) acc._1
                                                                                                                                                  else acc._1 + totalRedelegatedUnbonded.get(e).get(redBondStart).get(srcValidator).get(bondStart)
                                                                                                                       val slashAmount = val listSlashes = slashes.select(s => inRedelegationSlashingWindow(s.epoch, startRedelegationFromEnd(redBondStart), redBondStart) and
