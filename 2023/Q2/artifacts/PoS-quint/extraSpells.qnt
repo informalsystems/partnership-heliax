@@ -11,6 +11,8 @@ module extraSpells {
 
   pure def printVariable(name: str, variable: a): bool = true
 
+  pure def printMapVariables(__map: a -> b): bool = true
+
   /// Compute the minimum of two integers.
   ///
   /// - @param __i first integer

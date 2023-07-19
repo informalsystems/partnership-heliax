@@ -793,16 +793,128 @@ module helperFunctions {
       result._4
     }
 
-    /*run slashValidatorFromSimulatorTest = {
-      val totalUnbonded = Map(10 -> Map(), 11 -> Map(), 7 -> Map(), 8 -> Map(), 9 -> Map(6 -> 10, 8 -> 3))
-      val totalRedelegatedUnbonded = Map(10 -> Map(), 11 -> Map(), 7 -> Map(), 8 -> Map(), 9 -> Map(8 -> Map("alice" -> Map(4 -> 3))))
-      val totalBonded = Map(10 -> 0, 11 -> 0, 7 -> 0, 8 -> 0, 9 -> 0)
-      val totalRedelegatedBonded = Map(10 -> Map(), 11 -> Map(), 7 -> Map("alice" -> Map(5 -> 13)), 8 -> Map("alice" -> Map(4 -> 3)), 9 -> Map())
-      val slashes = Map("alice" -> [{ epoch: 2, rate: 1 }, { epoch: 6, rate: 1 }], "bob" -> [{ epoch: 2, rate: 1 }])
+    run slashValidatorTest = {
+      val infractionStake = 23
+      val curEpoch = 10
+      val rate = 1
+      val emptyTotalUnbonded = (curEpoch-CUBIC_OFFSET-UNBONDING_OFFSET).to(curEpoch+PIPELINE_OFFSET).mapBy(e => Map())
+      val emptyTotalRedelegatedUnbonded = emptyTotalUnbonded
+      val emptytotalRedelegatedBonded = emptyTotalUnbonded
+      val emptyTotalBonded = (curEpoch-CUBIC_OFFSET-UNBONDING_OFFSET).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 0)
+      val initStakesMap = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => infractionStake)
+      val emptySlashAmountsMap = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 0)
+      val emptySlashes = Map("alice" -> [], "bob" -> [])
       all {
-        assert(slashValidator("bob", Map(11 -> 0), 10, 23, slashes, totalUnbonded, totalRedelegatedUnbonded, totalBonded, totalRedelegatedBonded, 1, Map(11 -> 0)) == Map(11 -> 0))
+        // clean slashing: no new bonds or slashes
+        assert(slashValidator("bob",
+                              initStakesMap,
+                              curEpoch,
+                              infractionStake,
+                              emptySlashes,
+                              emptyTotalUnbonded,
+                              emptyTotalRedelegatedUnbonded,
+                              emptyTotalBonded,
+                              emptytotalRedelegatedBonded,
+                              rate,
+                              emptySlashAmountsMap) == initStakesMap),
+        // there is a bond happening at curEpoch
+        assert(slashValidator("bob",
+                              (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => infractionStake + 6),
+                              curEpoch,
+                              infractionStake,
+                              emptySlashes,
+                              emptyTotalUnbonded,
+                              emptyTotalRedelegatedUnbonded,
+                              emptyTotalBonded.set(curEpoch, 6),
+                              emptytotalRedelegatedBonded,
+                              rate,
+                              emptySlashAmountsMap) == initStakesMap),
+        // there is a bond happening at curEpoch which is unbonded at curEpoch + 1
+        assert(slashValidator("bob",
+                              initStakesMap,
+                              curEpoch,
+                              infractionStake,
+                              emptySlashes,
+                              emptyTotalUnbonded.set(curEpoch+1, Map(curEpoch -> 6)),
+                              emptyTotalRedelegatedUnbonded,
+                              emptyTotalBonded.set(curEpoch, 6),
+                              emptytotalRedelegatedBonded,
+                              rate,
+                              emptySlashAmountsMap) == initStakesMap),
+        // there is a bond happening at curEpoch which is partially unbonded at curEpoch + 1
+        assert(slashValidator("bob",
+                              (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => infractionStake + 3),
+                              curEpoch,
+                              infractionStake,
+                              emptySlashes,
+                              emptyTotalUnbonded.set(curEpoch+1, Map(curEpoch -> 3)),
+                              emptyTotalRedelegatedUnbonded,
+                              emptyTotalBonded.set(curEpoch, 6),
+                              emptytotalRedelegatedBonded,
+                              rate,
+                              emptySlashAmountsMap) == initStakesMap),
+        // there is a redelegation happening at curEpoch
+        assert(slashValidator("bob",
+                              (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => infractionStake + 6),
+                              curEpoch,
+                              infractionStake,
+                              emptySlashes,
+                              emptyTotalUnbonded,
+                              emptyTotalRedelegatedUnbonded,
+                              emptyTotalBonded,
+                              emptytotalRedelegatedBonded.set(curEpoch, Map("alice" -> Map(2 -> 5, 3 -> 1))),
+                              rate,
+                              emptySlashAmountsMap) == initStakesMap),
+        // there is a redelegation happening at curEpoch that is unbonded at curEpoch + 1
+        assert(slashValidator("bob",
+                              initStakesMap,
+                              curEpoch,
+                              infractionStake,
+                              emptySlashes,
+                              emptyTotalUnbonded,
+                              emptyTotalRedelegatedUnbonded.set(curEpoch+1, Map(curEpoch -> Map("alice" -> Map(2 -> 5, 3 -> 1)))),
+                              emptyTotalBonded,
+                              emptytotalRedelegatedBonded.set(curEpoch, Map("alice" -> Map(2 -> 5, 3 -> 1))),
+                              rate,
+                              emptySlashAmountsMap) == initStakesMap),
+        // there is a redelegation at curEpoch that is partially unbonded at curEpoch + 1
+        assert(slashValidator("bob",
+                              (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => infractionStake + 2),
+                              curEpoch,
+                              infractionStake,
+                              emptySlashes,
+                              emptyTotalUnbonded,
+                              emptyTotalRedelegatedUnbonded.set(curEpoch+1, Map(curEpoch -> Map("alice" -> Map(2 -> 4)))),
+                              emptyTotalBonded,
+                              emptytotalRedelegatedBonded.set(curEpoch, Map("alice" -> Map(2 -> 5, 3 -> 1))),
+                              rate,
+                              emptySlashAmountsMap) == initStakesMap),
+        // there is a bond at curEpoch, redelegation at curEpoch+1 that is partially unbonded at curEpoch+1
+        assert(slashValidator("bob",
+                              (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => infractionStake + 8),
+                              curEpoch,
+                              infractionStake,
+                              emptySlashes,
+                              emptyTotalUnbonded,
+                              emptyTotalRedelegatedUnbonded.set(curEpoch+1, Map(curEpoch+1 -> Map("alice" -> Map(2 -> 4)))),
+                              emptyTotalBonded.set(curEpoch, 6),
+                              emptytotalRedelegatedBonded.set(curEpoch+1, Map("alice" -> Map(2 -> 5, 3 -> 1))),
+                              rate,
+                              emptySlashAmountsMap) == initStakesMap),
+        // there is a bond at curEpoch and there exists a slash for "alice"
+        assert(slashValidator("bob",
+                              (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 6),
+                              curEpoch,
+                              infractionStake,
+                              emptySlashes.set("alice", [{epoch: curEpoch-slashProcessingDelay-1, rate: 1}]),
+                              emptyTotalUnbonded,
+                              emptyTotalRedelegatedUnbonded,
+                              emptyTotalBonded.set(curEpoch, 6),
+                              emptytotalRedelegatedBonded,
+                              rate,
+                              emptySlashAmountsMap) == (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 0)),
       }
-    }*/
+    }
 
     // The function slashRedelegation computes how much can be slashed from a redelegated bond considering that the bond may have been completely or partially 
     // unbonded and that the source validator may have misbehaved already within the redelegation slashing window.
