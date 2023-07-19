@@ -780,6 +780,7 @@ module helperFunctions {
       val initBalanceBonds = (infractionEpoch+1).to(curEpoch).fold(0, (sum, e) => sum + (totalBonded.get(e) - computeRecentTotalUnbonded(infractionEpoch, totalUnbonded.get(e), totalRedelegatedUnbonded.get(e))))
       val zeroedBalanceRedelegatedBonds = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 0)
       val initBalanceRedelegatedBonds = (infractionEpoch+1).to(curEpoch).fold(zeroedBalanceRedelegatedBonds, (acc, e) => computeBalanceRedelegatedBonds(totalRedelegatedBonded.get(e), e, curEpoch, slashes, totalRedelegatedUnbonded, acc))
+      // This should be iterated in epoch increasing order. TODO: transform this into a list a use foldl
       val result = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).fold((initTotalUnbonded,
                                                                    initBalanceBonds,
                                                                    initBalanceRedelegatedBonds,
@@ -903,14 +904,14 @@ module helperFunctions {
                               emptySlashAmountsMap) == initStakesMap),
         // there is a bond at curEpoch and there exists a slash for "alice"
         assert(slashValidator("bob",
-                              (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 6),
+                              (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 8),
                               curEpoch,
                               infractionStake,
                               emptySlashes.set("alice", [{epoch: curEpoch-slashProcessingDelay-1, rate: 1}]),
                               emptyTotalUnbonded,
-                              emptyTotalRedelegatedUnbonded,
+                              emptyTotalRedelegatedUnbonded.set(curEpoch+1, Map(curEpoch+1 -> Map("alice" -> Map(2 -> 4)))),
                               emptyTotalBonded.set(curEpoch, 6),
-                              emptytotalRedelegatedBonded,
+                              emptytotalRedelegatedBonded.set(curEpoch+1, Map("alice" -> Map(2 -> 5, 3 -> 1))),
                               rate,
                               emptySlashAmountsMap) == (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 0)),
       }
