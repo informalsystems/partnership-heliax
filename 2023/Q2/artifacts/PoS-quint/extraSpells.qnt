@@ -9,6 +9,10 @@ module extraSpells {
 
   import basicSpells.* from "./basicSpells"
 
+  pure def printVariable(name: str, variable: a): bool = true
+
+  pure def printMapVariables(__map: a -> b): bool = true
+
   /// Compute the minimum of two integers.
   ///
   /// - @param __i first integer
@@ -94,7 +98,7 @@ module extraSpells {
     assert(Map(2 -> 3, 4 -> 5).mapSafeSet(2, 7) == Map(2 -> 7, 4 -> 5))
   }
 
-  /// Remove a set of map entries.
+  /// Remove a set of map entries. 
   ///
   /// - @param __map a map to remove the set of entries from
   /// - @param __keys the set of keys to remove
