@@ -99,6 +99,47 @@ module helperFunctions {
       }
     }
 
+  /// Orders a set of validators addresses in decreasing order.
+  ///
+  /// - @param __set a set of validator addresses.
+  /// - @param __rank a map from validator addresse to rank (int).
+  /// - @returns a list with the validator addresses ordered in decreasing order
+  pure def sortValidatorsDecreasing(__set: Set[Address], __rank: Address -> int): List[Address] = {
+    __set.fold({unordered: __set, ordered: List()}, (acc, _) => val __max = maxValidator(acc.unordered, __rank)
+                                                    {unordered: acc.unordered.setRemove(__max), ordered: acc.ordered.append(__max)}).ordered
+  }
+
+  run sortValidatorsDecreasingTest = all {
+    val __rank = Map("alice" -> 1, "bob" -> 2, "john" -> 4)
+    all {
+      assert(sortValidatorsDecreasing(Set("alice", "bob", "john"), __rank) == List("john", "bob", "alice")),
+      assert(sortValidatorsDecreasing(Set("alice", "bob", "john"), __rank) == List("john", "bob", "alice")),
+      assert(sortValidatorsDecreasing(Set("alice", "john", "bob"), __rank) == List("john", "bob", "alice")),
+      assert(sortValidatorsDecreasing(Set("john", "bob", "alice"), __rank) == List("john", "bob", "alice")),
+      assert(sortValidatorsDecreasing(Set(), __rank) == List()),
+    }
+  }
+  /// Compute the max of a set of validator addresses according to a rank map.
+  ///
+  /// - @param __set a set of validator addresses.
+  /// - @param __rank a map from validator addresse to rank (int).
+  /// - @returns the max.
+  pure def maxValidator(__set: Set[Address], __rank: Address -> int): Address = {
+     __set.fold((true, ""), (__max, __i) => if (__max._1) (false, __i)
+                                           else if (__rank.get(__i) > __rank.get(__max._2)) (false, __i) else (false, __max._2))._2
+  }
+
+  run maxValidatorTest = all {
+    val __rank = Map("alice" -> 1, "bob" -> 2, "john" -> 4)
+    all {
+      assert(maxValidator(Set("alice", "bob", "john"), __rank) == "john"),
+      assert(maxValidator(Set("alice", "bob", "john"), __rank) == "john"),
+      assert(maxValidator(Set("alice", "john", "bob"), __rank) == "john"),
+      assert(maxValidator(Set("john", "bob", "alice"), __rank) == "john"),
+      assert(maxValidator(Set(), __rank) == ""),
+    }
+  }
+
     // **************************************************************************
     // Redelegation helper functions
     // ************************************************************************* 
@@ -113,37 +154,38 @@ module helperFunctions {
     //   Note that valsToRemove includes valToModify if different to "" and epochsToRemove includes epochToModify if different to -1.
     pure def computeModifiedRedelegation(redelegatedBonds: RedelegatedBondsMap, epoch: Epoch, amount: int): ModifiedRedelegation = {
       val totalRedelegated = redelegatedBonds.keys().fold(0, (sum, src) => redelegatedBonds.get(src).keys().fold(sum, (acc, e) => acc + redelegatedBonds.get(src).get(e)))
+      val orderedValidators = sortValidatorsDecreasing(redelegatedBonds.keys(), VALIDATORS_RANK)
       // If the total amount of redelegated bonds is less than the target amount, then all redelegated bonds must be unbonded.
       if (totalRedelegated <= amount) {epoch: -1, valsToRemove: Set(), valToModify: "", epochsToRemove: Set(), epochToModify: -1, newAmount: -1}
       // If the total amount of redelegated bonds is greater than the target amount, then we need to iterate over the redelegated bonds
       // until the target amount is unbonded. The iteration works as follows (comments interleaved with the folds):
-      // 1. It first iterates over source validators. We should iterate in a deterministic order over validators here. Do not know how to do it in Quint at the moment.
-      else redelegatedBonds.keys().fold({remainder: amount, modified: {epoch: epoch, valsToRemove: Set(), valToModify: "", epochsToRemove: Set(), epochToModify: -1, newAmount: -1}}, 
-                                        (acc, src) => if (acc.remainder == 0) acc
-                                                      else {
-                                                        val totalSrcValidator = redelegatedBonds.get(src).keys().fold(0, (sum, e) => sum + redelegatedBonds.get(src).get(e))
-                                                        // 2. For a given validator, if the remaining is greater or equal to the total amount of redelegated tokens of that source validator, the
-                                                        //   function removes the source validator: all its redelegated tokens will be  effectively unbonded.
-                                                        if (totalRedelegated <= acc.remainder) {remainder: acc.remainder - totalSrcValidator,
-                                                                                                modified: acc.modified.with("valsToRemove", acc.modified.valsToRemove.setAdd(src))}
-                                                        else {
-                                                          // 3. If the remaining is less than the total amount of redelegated tokens of that source validator, the function iterates over all the bonds
-                                                          //   of that validator in epoch decreasing order until the remaining is unbonded.
-                                                          val resultIteration = iterateBondsUpToAmount(redelegatedBonds.get(src), acc.remainder)
-                                                          {remainder: 0,
-                                                          modified: if (resultIteration.new.start == -1) acc.modified.with("valsToRemove", acc.modified.valsToRemove.setAdd(src))
-                                                                                                                     .with("valToModify", src)
-                                                                                                                     .with("epochsToRemove", resultIteration.toRemove)
-                                                                    else acc.modified.with("valsToRemove", acc.modified.valsToRemove.setAdd(src))
-                                                                                     .with("valToModify", src)
-                                                                                     .with("epochsToRemove", resultIteration.toRemove.setAdd(resultIteration.new.start))
-                                                                                     .with("epochToModify", resultIteration.new.start)
-                                                                                     .with("newAmount", resultIteration.new.amount)}
-                                                        }
-                                                      }).modified
+      // 1. It first iterates over source validators in a deterministic order (ranking decreasing order)
+      else orderedValidators.foldl({remainder: amount, modified: {epoch: epoch, valsToRemove: Set(), valToModify: "", epochsToRemove: Set(), epochToModify: -1, newAmount: -1}}, 
+                                   (acc, src) => if (acc.remainder == 0) acc
+                                                 else {
+                                                   val totalSrcValidator = redelegatedBonds.get(src).keys().fold(0, (sum, e) => sum + redelegatedBonds.get(src).get(e))
+                                                   // 2. For a given validator, if the remaining is greater or equal to the total amount of redelegated tokens of that source validator, the
+                                                   //   function removes the source validator: all its redelegated tokens will be  effectively unbonded.
+                                                   if (totalRedelegated <= acc.remainder) {remainder: acc.remainder - totalSrcValidator,
+                                                                                           modified: acc.modified.with("valsToRemove", acc.modified.valsToRemove.setAdd(src))}
+                                                   else {
+                                                     // 3. If the remaining is less than the total amount of redelegated tokens of that source validator, the function iterates over all the bonds
+                                                     //   of that validator in epoch decreasing order until the remaining is unbonded.
+                                                     val resultIteration = iterateBondsUpToAmount(redelegatedBonds.get(src), acc.remainder)
+                                                     {remainder: 0,
+                                                     modified: if (resultIteration.new.start == -1) acc.modified.with("valsToRemove", acc.modified.valsToRemove.setAdd(src))
+                                                                                                                .with("valToModify", src)
+                                                                                                                .with("epochsToRemove", resultIteration.toRemove)
+                                                               else acc.modified.with("valsToRemove", acc.modified.valsToRemove.setAdd(src))
+                                                                                .with("valToModify", src)
+                                                                                .with("epochsToRemove", resultIteration.toRemove.setAdd(resultIteration.new.start))
+                                                                                .with("epochToModify", resultIteration.new.start)
+                                                                                .with("newAmount", resultIteration.new.amount)}
+                                                  }
+                                                 }).modified
     }
 
-    // TODO: more tests here when we can iterate over srouce validators deterministically
+    // TODO: more tests here now that we iterate over source validators deterministically
     run computeModifiedRedelegationTest = {
       val redelegatedBonds = Map("alice" -> Map(2 -> 6, 4 -> 7), "bob" -> Map(1 -> 5, 4 -> 7))
       all {
