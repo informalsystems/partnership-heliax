@@ -171,6 +171,9 @@ module types {
   // Set of all validator addresses
   pure val VALIDATORS: Set[str] = Set("alice", "bob")
 
+  // A map from validator address to integer. Used to iterate deterministically over validator addresses
+  pure val VALIDATORS_RANK: Address -> int = Map("alice" -> 1, "bob" -> 2)
+
   // Transactions per epoch
   // the spec is not fully ready to handle multiple txs per epoch
   // we would need to handle duplicate bonds and unbonds
