@@ -50,6 +50,26 @@ module extraSpells {
     assert(maxSet(Set(-8, -4, -3)) == -3),
   }
 
+    /// Compute the min of a set of integers.
+  /// The set must be non-empty
+  ///
+  /// - @param __set a set of integers
+  /// - @returns the min
+  pure def minSet(__set: Set[int]): int = {
+    __set.fold((true, 0), (__min, __i) => if (__min._1) (false, __i)
+                                          else if (__i < __min._2) (false, __i) else (false, __min._2))._2
+  }
+
+  run minSetTest = all {
+    assert(minSet(Set(3, 4, 8)) == 3),
+    assert(minSet(Set(3, 8, 4)) == 3),
+    assert(minSet(Set(8, 4, 3)) == 3),
+    assert(minSet(Set(8, 8, 8)) == 8),
+    assert(minSet(Set(-3, -4, -8)) == -8),
+    assert(minSet(Set(-3, -8, -4)) == -8),
+    assert(minSet(Set(-8, -4, -3)) == -8),
+  }
+
   /// Orders a set of integers in decreasing order.
   ///
   /// - @param __set a set of integers
@@ -64,6 +84,22 @@ module extraSpells {
     assert(sortSetDecreasing(Set(8, 4, 3)) == [8, 4, 3]),
     assert(sortSetDecreasing(Set()) == []),
     assert(sortSetDecreasing(Set(9, -2, 5, 10)) == [10, 9, 5, -2]),
+  }
+
+  /// Orders a set of integers in increasing order.
+  ///
+  /// - @param __set a set of integers
+  /// - @returns a list with the integers ordered in increasing order
+  pure def sortSetIncreasing(__set: Set[int]): List[int] = {
+    __set.fold({unordered: __set, ordered: List()}, (acc, _) => val __max = minSet(acc.unordered)
+                                                    {unordered: acc.unordered.setRemove(__max), ordered: acc.ordered.append(__max)}).ordered
+  }
+
+  run sortSetIncreasingTest = all {
+    assert(sortSetIncreasing(Set(3, 8, 4)) == [3, 4, 8]),
+    assert(sortSetIncreasing(Set(8, 4, 3)) == [3, 4, 8]),
+    assert(sortSetIncreasing(Set()) == []),
+    assert(sortSetIncreasing(Set(9, -2, 5, 10)) == [-2, 5, 9, 10]),
   }
 
   /// Add a set element.
