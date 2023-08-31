@@ -997,7 +997,8 @@ module helperFunctions {
                                                                                         val slashableStake = val listSlashes = slashes.select(s => inRedelegationSlashingWindow(s.epoch, startRedelegationFromEnd(redBondStart), redBondStart) and
                                                                                                                                                    bondStart <= s.epoch)
                                                                                                              applyListSlashes(listSlashes, amount - updatedTotalUnbonded)
-                                                                                        (updatedTotalUnbonded, acc._2.set(e, acc._2.get(e) + min(slashAmount, slashableStake))))
+                                                                                        if (e > curEpoch + 1) (updatedTotalUnbonded, acc._2.set(e, acc._2.get(e) + min(slashAmount, slashableStake)))
+                                                                                        else (updatedTotalUnbonded, acc._2))
       result._2                                                                                                                                  
     }
 
