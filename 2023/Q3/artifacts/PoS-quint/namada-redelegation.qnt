@@ -391,6 +391,8 @@ module namada {
     // Invariants
     // *************************************************************************
 
+    // Semantic invariants
+
     // Invariant 1: A delegator's balance cannot become negative.
     val balanceGreaterZero = USERS.forall(user => delegators.get(user).balance >= 0)
 
@@ -420,6 +422,16 @@ module namada {
     //Invariant 8: The user's balance cannot become greater than the initial balance
     val boundedBalance = USERS.forall(user => delegators.get(user).balance <= INIT_BALANCE)
 
+    // Non-semantic invariants
+
+    // delegator's bonded for a given validator and epoch is always greater or equal than redelegatedBonded for that epoch and validator
+    val bondsGreaterRedelegations = USERS.forall(user => 
+                                    VALIDATORS.forall(validator => val epochs = delegators.get(user).bonded.get(validator).keys()
+                                    epochs.forall(epoch => if (not(delegators.get(user).redelegatedBonded.get(validator).has(epoch))) true
+                                                           else val redelegatedBonds = delegators.get(user).redelegatedBonded.get(validator).get(epoch)
+                                                                val totalRedelegated =  redelegatedBonds.keys().fold(0, (sum, src) => redelegatedBonds.get(src).keys().fold(sum, (acc, e) => acc + redelegatedBonds.get(src).get(e)))
+                                                                delegators.get(user).bonded.get(validator).get(epoch) >= totalRedelegated)))
+
     // All invariants
     val allInvariants = balanceGreaterZero and
                         posAccountGreaterZero and
@@ -428,7 +440,8 @@ module namada {
                         noSlashingStakeEqualSumBonds and
                         totalAmountTokensConstant and
                         stakeGreaterZero and
-                        boundedBalance
+                        boundedBalance and
+                        bondsGreaterRedelegations
                   
     // All invariants without slash pool
     // Due to the lack of slashing pool posAccountZero and noSlashingStakeEqualSumBonds do not hold
@@ -437,7 +450,8 @@ module namada {
                                        stakeEqualOrLessSumBonds and
                                        totalAmountTokensConstant and
                                        stakeGreaterZero and
-                                       boundedBalance
+                                       boundedBalance and
+                                       bondsGreaterRedelegations
     
     // ****************************************************************************
     // Execution
