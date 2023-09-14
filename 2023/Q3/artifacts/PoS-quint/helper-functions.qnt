@@ -95,7 +95,7 @@ module helperFunctions {
         assert(iterateBondsUpToAmount(bonds, 8) == {toRemove: Set(6), new: {start: -1, amount: 0}}),
         assert(iterateBondsUpToAmount(bonds, 10) == {toRemove: Set(6), new: {start: 2, amount: 1}}),
         assert(iterateBondsUpToAmount(bonds, 11) == {toRemove: Set(6, 2), new: {start: -1, amount: 0}}),
-        assert(iterateBondsUpToAmount(bonds, 12) == {toRemove: Set(6, 2), new: {start: 1, amount: 4}})
+        assert(iterateBondsUpToAmount(bonds, 12) == {toRemove: Set(6, 2), new: {start: 1, amount: 4}}),
       }
     }
 
@@ -156,7 +156,7 @@ module helperFunctions {
       val totalRedelegated = redelegatedBonds.keys().fold(0, (sum, src) => redelegatedBonds.get(src).keys().fold(sum, (acc, e) => acc + redelegatedBonds.get(src).get(e)))
       val orderedValidators = sortValidatorsDecreasing(redelegatedBonds.keys(), VALIDATORS_RANK)
       // If the total amount of redelegated bonds is less than the target amount, then all redelegated bonds must be unbonded.
-      if (totalRedelegated <= amount) {epoch: -1, valsToRemove: Set(), valToModify: "", epochsToRemove: Set(), epochToModify: -1, newAmount: -1}
+      if (totalRedelegated <= amount) {epoch: epoch, valsToRemove: Set(), valToModify: "", epochsToRemove: Set(), epochToModify: -1, newAmount: -1}
       // If the total amount of redelegated bonds is greater than the target amount, then we need to iterate over the redelegated bonds
       // until the target amount is unbonded. The iteration works as follows (comments interleaved with the folds):
       // 1. It first iterates over source validators in a deterministic order (ranking decreasing order)
@@ -189,13 +189,13 @@ module helperFunctions {
     run computeModifiedRedelegationTest = {
       val redelegatedBonds = Map("alice" -> Map(2 -> 6, 4 -> 7), "bob" -> Map(1 -> 5, 4 -> 7))
       all {
-        assert(computeModifiedRedelegation(redelegatedBonds, 5, 25) == {epoch: -1,
+        assert(computeModifiedRedelegation(redelegatedBonds, 5, 25) == {epoch: 5,
                                                                         valsToRemove: Set(),
                                                                         valToModify: "",
                                                                         epochsToRemove: Set(),
                                                                         epochToModify: -1,
                                                                         newAmount: -1}),
-        assert(computeModifiedRedelegation(redelegatedBonds, 5, 30) == {epoch: -1,
+        assert(computeModifiedRedelegation(redelegatedBonds, 5, 30) == {epoch: 5,
                                                                         valsToRemove: Set(),
                                                                         valToModify: "",
                                                                         epochsToRemove: Set(),
@@ -216,7 +216,7 @@ module helperFunctions {
     pure def computeNewRedelegatedUnbonds(redelegatedBonds: Epoch -> RedelegatedBondsMap, unbondedEpochs: Set[Epoch], modified: ModifiedRedelegation): Epoch -> RedelegatedBondsMap = {
       // Add the modified epoch if there exists and filter out those epochs that do not include redelegations
       val updatedUnbondedEpochs = if (modified.epoch == -1) unbondedEpochs.filter(e => redelegatedBonds.has(e)) else unbondedEpochs.setAdd(modified.epoch).filter(e => redelegatedBonds.has(e))
-      updatedUnbondedEpochs.mapBy(start => if (start != modified.epoch) redelegatedBonds.get(start)
+      updatedUnbondedEpochs.mapBy(start => if (start != modified.epoch or modified.valsToRemove == Set()) redelegatedBonds.get(start)
                                            else modified.valsToRemove.mapBy(src => if (src != modified.valToModify) redelegatedBonds.get(start).get(src)
                                                                                    else modified.epochsToRemove.mapBy(bondStart => if (bondStart != modified.epochToModify) redelegatedBonds.get(start).get(src).get(bondStart)
                                                                                                                                    else redelegatedBonds.get(start).get(src).get(bondStart) - modified.newAmount)))

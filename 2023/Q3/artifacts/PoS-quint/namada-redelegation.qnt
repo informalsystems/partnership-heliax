@@ -101,7 +101,8 @@ module namada {
                                     else computeModifiedRedelegation(redelegatedBonds.get(resultUnbonding.new.start), resultUnbonding.new.start, bonds.get(resultUnbonding.new.start) - resultUnbonding.new.amount)
         // Compute the updated delegator's redelegated bonded by removing the unbonded bonds and updating the partially unbonded one computed in the previous step
         val updatedRedelegatedBonded = if (modifiedRedelegation.epoch == -1) redelegatedBonds.mapRemoveSet(resultUnbonding.toRemove)
-                                       else redelegatedBonds.mapRemoveSet(resultUnbonding.toRemove).set(modifiedRedelegation.epoch, updateRedelegatedBondsMap(redelegatedBonds.get(modifiedRedelegation.epoch), modifiedRedelegation))
+                                       else if (modifiedRedelegation.valsToRemove == Set()) redelegatedBonds.mapRemoveSet(resultUnbonding.toRemove.setAdd(modifiedRedelegation.epoch))
+                                            else redelegatedBonds.mapRemoveSet(resultUnbonding.toRemove).set(modifiedRedelegation.epoch, updateRedelegatedBondsMap(redelegatedBonds.get(modifiedRedelegation.epoch), modifiedRedelegation))
         // Compute the set of unbond records that have to be recorded out of the set of unbonded bonds computed at the previous step
         val keysUnbonds = if (resultUnbonding.new.start == -1) resultUnbonding.toRemove else resultUnbonding.toRemove.setAdd(resultUnbonding.new.start)
         val newUnbonds = tuples(keysUnbonds, Set(endEpoch)).mapBy(unbondKey => val start = unbondKey._1
