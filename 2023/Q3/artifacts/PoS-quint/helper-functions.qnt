@@ -166,7 +166,7 @@ module helperFunctions {
                                                    val totalSrcValidator = redelegatedBonds.get(src).keys().fold(0, (sum, e) => sum + redelegatedBonds.get(src).get(e))
                                                    // 2. For a given validator, if the remaining is greater or equal to the total amount of redelegated tokens of that source validator, the
                                                    //   function removes the source validator: all its redelegated tokens will be  effectively unbonded.
-                                                   if (totalRedelegated <= acc.remainder) {remainder: acc.remainder - totalSrcValidator,
+                                                   if (totalSrcValidator <= acc.remainder) {remainder: acc.remainder - totalSrcValidator,
                                                                                            modified: acc.modified.with("valsToRemove", acc.modified.valsToRemove.setAdd(src))}
                                                    else {
                                                      // 3. If the remaining is less than the total amount of redelegated tokens of that source validator, the function iterates over all the bonds
@@ -200,7 +200,7 @@ module helperFunctions {
                                                                         valToModify: "",
                                                                         epochsToRemove: Set(),
                                                                         epochToModify: -1,
-                                                                        newAmount: -1})
+                                                                        newAmount: -1}),
       }
     }
 
