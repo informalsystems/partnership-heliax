@@ -705,7 +705,7 @@ module namada {
         init
         .then(actionDelegate(user, validator, 10))
         .then(actionUnbond(user, validator, 5))
-        .then(actionFauxTransaction(user, validator, 0, 0, -1).repeated(UNBONDING_OFFSET+PIPELINE_OFFSET+CUBIC_OFFSET))
+        .then((UNBONDING_OFFSET+PIPELINE_OFFSET+CUBIC_OFFSET).reps(_ => actionFauxTransaction(user, validator, 0, 0, -1)))
         .then(actionWithdraw(user, validator))
         .then(all{ assert(delegators.get(user).balance == 15), allUnchanged})
         
@@ -737,7 +737,7 @@ module namada {
         .then(actionDelegate(user, validator, amount))
         .then(actionUnbond(user, validator, amountUnbonded))//epoch=UNBONDING_OFFSET+1
         .then(actionEvidence(initEpoch + 1, validator))//to be processed at the end of 2*UNBONDING_OFFSET+2*CUBIC_OFFSET+1
-        .then(actionFauxTransaction(user, validator, 0, 0, -1).repeated(UNBONDING_OFFSET+CUBIC_OFFSET))
+        .then((UNBONDING_OFFSET+CUBIC_OFFSET).reps(_ => actionFauxTransaction(user, validator, 0, 0, -1)))
         //slash already processed
         .then(actionWithdraw(user, validator))
         // the 5 tokens unbonded shoul be slashed
@@ -762,7 +762,7 @@ module namada {
         .then(actionDelegate(user, validator, amount)) //epoch=UNBONDING_OFFSET assuming init epoch=UNBONDING_OFFSET
         .then(actionUnbond(user, validator, amountUnbonded))//epoch=UNBONDING_OFFSET+CUBIC_OFFSET+1
         .then(actionEvidence(initEpoch + 1, validator)) //to be processed at the end of 2*UNBONDING_OFFSET+2*CUBIC_OFFSET+1
-        .then(actionFauxTransaction(user, validator, 0, 0, -1).repeated(slashingOffset - 1))//epoch=2*UNBONDING_OFFSET+2*CUBIC_OFFSET
+        .then((slashingOffset - 1).reps(_ => actionFauxTransaction(user, validator, 0, 0, -1))) //epoch=2*UNBONDING_OFFSET+2*CUBIC_OFFSET
         //check that slash has not been processed yet
         .then(all{ assert(validators.get(validator).slashes == List()),
                    allUnchanged })
@@ -844,7 +844,7 @@ module namada {
         .then(actionEvidence(initEpoch + PIPELINE_OFFSET + 1, validator)) // epoch = initEpoch + 6
         //slash processed at initEpoch + PIPELINE_OFFSET + 2 + CUBIC_OFFSET + UNBONDING_OFFSET = (initEpoch + 4) + 5 = initEpoch + 9
         .then(actionEvidence(initEpoch + PIPELINE_OFFSET + 2, validator)) // epoch = initEpoch + 6
-        .then(actionFauxTransaction(user, validator, 0, 0, -1).repeated(3)) // epoch = initEpoch + 6..initEpoch + 8
+        .then(3.reps(_ => actionFauxTransaction(user, validator, 0, 0, -1))) // epoch = initEpoch + 6..initEpoch + 8
         .then(all{assert(validators.get(validator).stake.get(initEpoch + 9) == stakeAfterProcessing),
                   allUnchanged })
       }
