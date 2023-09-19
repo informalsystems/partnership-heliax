@@ -703,11 +703,14 @@ module namada {
       nondet validator = VALIDATORS.oneOf()
       all {
         init
-        .then(actionDelegate(user, validator, 10))
+        .then(all {
+          assert(INIT_BALANCE >= 10),
+          actionDelegate(user, validator, 10),
+          })
         .then(actionUnbond(user, validator, 5))
         .then((UNBONDING_OFFSET+PIPELINE_OFFSET+CUBIC_OFFSET).reps(_ => actionFauxTransaction(user, validator, 0, 0, -1)))
         .then(actionWithdraw(user, validator))
-        .then(all{ assert(delegators.get(user).balance == 15), allUnchanged})
+        .then(all{ assert(delegators.get(user).balance == INIT_BALANCE - 10 + 5), allUnchanged})
         
       }
     }
@@ -718,10 +721,13 @@ module namada {
       nondet validator = VALIDATORS.oneOf()
       all {
         init
-        .then(actionDelegate(user, validator, 8))
+        .then(all {
+          assert(INIT_BALANCE >= 8),
+          actionDelegate(user, validator, 8)
+          })
         .then(actionUnbond(user, validator, 5))
         .then(actionWithdraw(user, validator))
-        .then(all{ assert(delegators.get(user).balance == 12), allUnchanged})
+        .then(all{ assert(delegators.get(user).balance == INIT_BALANCE - 8), allUnchanged})
       }
     }
 
