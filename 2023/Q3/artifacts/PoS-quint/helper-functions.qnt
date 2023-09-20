@@ -95,7 +95,7 @@ module helperFunctions {
         assert(iterateBondsUpToAmount(bonds, 8) == {toRemove: Set(6), new: {start: -1, amount: 0}}),
         assert(iterateBondsUpToAmount(bonds, 10) == {toRemove: Set(6), new: {start: 2, amount: 1}}),
         assert(iterateBondsUpToAmount(bonds, 11) == {toRemove: Set(6, 2), new: {start: -1, amount: 0}}),
-        assert(iterateBondsUpToAmount(bonds, 12) == {toRemove: Set(6, 2), new: {start: 1, amount: 4}})
+        assert(iterateBondsUpToAmount(bonds, 12) == {toRemove: Set(6, 2), new: {start: 1, amount: 4}}),
       }
     }
 
@@ -156,7 +156,7 @@ module helperFunctions {
       val totalRedelegated = redelegatedBonds.keys().fold(0, (sum, src) => redelegatedBonds.get(src).keys().fold(sum, (acc, e) => acc + redelegatedBonds.get(src).get(e)))
       val orderedValidators = sortValidatorsDecreasing(redelegatedBonds.keys(), VALIDATORS_RANK)
       // If the total amount of redelegated bonds is less than the target amount, then all redelegated bonds must be unbonded.
-      if (totalRedelegated <= amount) {epoch: -1, valsToRemove: Set(), valToModify: "", epochsToRemove: Set(), epochToModify: -1, newAmount: -1}
+      if (totalRedelegated <= amount) {epoch: epoch, valsToRemove: Set(), valToModify: "", epochsToRemove: Set(), epochToModify: -1, newAmount: -1}
       // If the total amount of redelegated bonds is greater than the target amount, then we need to iterate over the redelegated bonds
       // until the target amount is unbonded. The iteration works as follows (comments interleaved with the folds):
       // 1. It first iterates over source validators in a deterministic order (ranking decreasing order)
@@ -166,7 +166,7 @@ module helperFunctions {
                                                    val totalSrcValidator = redelegatedBonds.get(src).keys().fold(0, (sum, e) => sum + redelegatedBonds.get(src).get(e))
                                                    // 2. For a given validator, if the remaining is greater or equal to the total amount of redelegated tokens of that source validator, the
                                                    //   function removes the source validator: all its redelegated tokens will be  effectively unbonded.
-                                                   if (totalRedelegated <= acc.remainder) {remainder: acc.remainder - totalSrcValidator,
+                                                   if (totalSrcValidator <= acc.remainder) {remainder: acc.remainder - totalSrcValidator,
                                                                                            modified: acc.modified.with("valsToRemove", acc.modified.valsToRemove.setAdd(src))}
                                                    else {
                                                      // 3. If the remaining is less than the total amount of redelegated tokens of that source validator, the function iterates over all the bonds
@@ -189,18 +189,54 @@ module helperFunctions {
     run computeModifiedRedelegationTest = {
       val redelegatedBonds = Map("alice" -> Map(2 -> 6, 4 -> 7), "bob" -> Map(1 -> 5, 4 -> 7))
       all {
-        assert(computeModifiedRedelegation(redelegatedBonds, 5, 25) == {epoch: -1,
+        assert(computeModifiedRedelegation(redelegatedBonds, 5, 25) == {epoch: 5,
                                                                         valsToRemove: Set(),
                                                                         valToModify: "",
                                                                         epochsToRemove: Set(),
                                                                         epochToModify: -1,
                                                                         newAmount: -1}),
-        assert(computeModifiedRedelegation(redelegatedBonds, 5, 30) == {epoch: -1,
+        assert(computeModifiedRedelegation(redelegatedBonds, 5, 30) == {epoch: 5,
                                                                         valsToRemove: Set(),
                                                                         valToModify: "",
                                                                         epochsToRemove: Set(),
                                                                         epochToModify: -1,
-                                                                        newAmount: -1})
+                                                                        newAmount: -1}),
+        assert(computeModifiedRedelegation(redelegatedBonds, 5, 7) == {epoch: 5,
+                                                                       valsToRemove: Set("bob"),
+                                                                       valToModify: "bob",
+                                                                       epochsToRemove: Set(4),
+                                                                       epochToModify: -1,
+                                                                       newAmount: -1}),
+        assert(computeModifiedRedelegation(redelegatedBonds, 5, 8) == {epoch: 5,
+                                                                       valsToRemove: Set("bob"),
+                                                                       valToModify: "bob",
+                                                                       epochsToRemove: Set(1, 4),
+                                                                       epochToModify: 1,
+                                                                       newAmount: 4}),
+        assert(computeModifiedRedelegation(redelegatedBonds, 5, 12) == {epoch: 5,
+                                                                        valsToRemove: Set("bob"),
+                                                                        valToModify: "",
+                                                                        epochsToRemove: Set(),
+                                                                        epochToModify: -1,
+                                                                        newAmount: -1}),
+        assert(computeModifiedRedelegation(redelegatedBonds, 5, 14) == {epoch: 5,
+                                                                        valsToRemove: Set("bob", "alice"),
+                                                                        valToModify: "alice",
+                                                                        epochsToRemove: Set(4),
+                                                                        epochToModify: 4,
+                                                                        newAmount: 5}),
+        assert(computeModifiedRedelegation(redelegatedBonds, 5, 19) == {epoch: 5,
+                                                                        valsToRemove: Set("bob", "alice"),
+                                                                        valToModify: "alice",
+                                                                        epochsToRemove: Set(4),
+                                                                        epochToModify: -1,
+                                                                        newAmount: -1}),
+        assert(computeModifiedRedelegation(redelegatedBonds, 5, 21) == {epoch: 5,
+                                                                        valsToRemove: Set("bob", "alice"),
+                                                                        valToModify: "alice",
+                                                                        epochsToRemove: Set(4,2),
+                                                                        epochToModify: 2,
+                                                                        newAmount: 4}),                                                                                                                                                                                   
       }
     }
 
@@ -216,7 +252,7 @@ module helperFunctions {
     pure def computeNewRedelegatedUnbonds(redelegatedBonds: Epoch -> RedelegatedBondsMap, unbondedEpochs: Set[Epoch], modified: ModifiedRedelegation): Epoch -> RedelegatedBondsMap = {
       // Add the modified epoch if there exists and filter out those epochs that do not include redelegations
       val updatedUnbondedEpochs = if (modified.epoch == -1) unbondedEpochs.filter(e => redelegatedBonds.has(e)) else unbondedEpochs.setAdd(modified.epoch).filter(e => redelegatedBonds.has(e))
-      updatedUnbondedEpochs.mapBy(start => if (start != modified.epoch) redelegatedBonds.get(start)
+      updatedUnbondedEpochs.mapBy(start => if (start != modified.epoch or modified.valsToRemove == Set()) redelegatedBonds.get(start)
                                            else modified.valsToRemove.mapBy(src => if (src != modified.valToModify) redelegatedBonds.get(start).get(src)
                                                                                    else modified.epochsToRemove.mapBy(bondStart => if (bondStart != modified.epochToModify) redelegatedBonds.get(start).get(src).get(bondStart)
                                                                                                                                    else redelegatedBonds.get(start).get(src).get(bondStart) - modified.newAmount)))
@@ -1067,4 +1103,32 @@ module helperFunctions {
         assert(slashValidatorRedelegation("alice", 14, redelegations, [{epoch: 8, rate: 1}], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0))
       }
     }
+
+    // The slashBond function computes how much is left from a bond after applying a set of slashes.
+    // - @param start the epoch at which the bond started.
+    // - @param amount the bonded amount.
+    // - @param redelegatedBond a RedelegatedBondsMap that .
+    // - @param validator the address of the bonding validator.
+    // - @param slashes a map from address validator to a list of slashes.
+    // - @returns the amount of tokens left after slashing.
+    pure def slashBond(start: Epoch, amount: int, redelegatedBond: RedelegatedBondsMap, validator: Address, slashes: Address -> List[Slash]): int = {
+      val listSlashes = slashes.get(validator).select(slash => start <= slash.epoch)
+      val resultFold = foldAndSlashRedelegatedBondsMap(redelegatedBond, start, listSlashes, slashes)
+      val totalNoRedelegated = amount - resultFold.totalRedelegated
+      val afterNoRedelegated = applyListSlashes(listSlashes, totalNoRedelegated)
+      afterNoRedelegated + resultFold.totalAfterSlashing
+    }
+
+    run slashBondTest = {
+      val slashes = VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 4, rate: 1}] else List())
+      all {
+        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => List())) == 30),
+        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 4, rate: 1}] else List())) == 30),
+        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 11, rate: 1}] else List())) == 0),
+        assert(slashBond(10, 30,  Map("bob" -> Map(4 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 5, rate: 1}] else List())) == 20),
+        assert(slashBond(10, 30,  Map("bob" -> Map(4 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 3, rate: 1}] else List())) == 30),
+        assert(slashBond(10, 30,  Map("bob" -> Map(2 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 2, rate: 1}] else List())) == 30),
+      }
+    }
+    
 }

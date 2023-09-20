@@ -101,7 +101,8 @@ module namada {
                                     else computeModifiedRedelegation(redelegatedBonds.get(resultUnbonding.new.start), resultUnbonding.new.start, bonds.get(resultUnbonding.new.start) - resultUnbonding.new.amount)
         // Compute the updated delegator's redelegated bonded by removing the unbonded bonds and updating the partially unbonded one computed in the previous step
         val updatedRedelegatedBonded = if (modifiedRedelegation.epoch == -1) redelegatedBonds.mapRemoveSet(resultUnbonding.toRemove)
-                                       else redelegatedBonds.mapRemoveSet(resultUnbonding.toRemove).set(modifiedRedelegation.epoch, updateRedelegatedBondsMap(redelegatedBonds.get(modifiedRedelegation.epoch), modifiedRedelegation))
+                                       else if (modifiedRedelegation.valsToRemove == Set()) redelegatedBonds.mapRemoveSet(resultUnbonding.toRemove.setAdd(modifiedRedelegation.epoch))
+                                            else redelegatedBonds.mapRemoveSet(resultUnbonding.toRemove).set(modifiedRedelegation.epoch, updateRedelegatedBondsMap(redelegatedBonds.get(modifiedRedelegation.epoch), modifiedRedelegation))
         // Compute the set of unbond records that have to be recorded out of the set of unbonded bonds computed at the previous step
         val keysUnbonds = if (resultUnbonding.new.start == -1) resultUnbonding.toRemove else resultUnbonding.toRemove.setAdd(resultUnbonding.new.start)
         val newUnbonds = tuples(keysUnbonds, Set(endEpoch)).mapBy(unbondKey => val start = unbondKey._1
@@ -390,6 +391,8 @@ module namada {
     // Invariants
     // *************************************************************************
 
+    // PoS invariants
+
     // Invariant 1: A delegator's balance cannot become negative.
     val balanceGreaterZero = USERS.forall(user => delegators.get(user).balance >= 0)
 
@@ -419,6 +422,23 @@ module namada {
     //Invariant 8: The user's balance cannot become greater than the initial balance
     val boundedBalance = USERS.forall(user => delegators.get(user).balance <= INIT_BALANCE)
 
+    // Invariant 9: The validator's voting power at a given epoch equal to the total amount of tokens delegated to that validator after applying slashes.
+    val stakeEqualSumSlashedBonds = VALIDATORS.forall(validator => USERS.fold(0, (sum, user) => val bonds = delegators.get(user).bonded.get(validator)
+                                                                                                val slashes = VALIDATORS.mapBy(v => validators.get(v).slashes)
+                                                                                                sum + bonds.keys().fold(0, (total, start) => val redelegatedBond = delegators.get(user).redelegatedBonded.get(validator).getOrElse(start, Map())
+                                                                                                                                             val afterSlashes = slashBond(start, bonds.get(start), redelegatedBond, validator, slashes)
+                                                                                                                                             total + afterSlashes)) == validators.get(validator).stake.get(pos.epoch + PIPELINE_OFFSET))
+
+    // Implementation invariants
+
+    // delegator's bonded for a given validator and epoch is always greater or equal than redelegatedBonded for that epoch and validator
+    val bondsGreaterRedelegations = USERS.forall(user => 
+                                    VALIDATORS.forall(validator => val epochs = delegators.get(user).bonded.get(validator).keys()
+                                    epochs.forall(epoch => if (not(delegators.get(user).redelegatedBonded.get(validator).has(epoch))) true
+                                                           else val redelegatedBonds = delegators.get(user).redelegatedBonded.get(validator).get(epoch)
+                                                                val totalRedelegated =  redelegatedBonds.keys().fold(0, (sum, src) => redelegatedBonds.get(src).keys().fold(sum, (acc, e) => acc + redelegatedBonds.get(src).get(e)))
+                                                                delegators.get(user).bonded.get(validator).get(epoch) >= totalRedelegated)))
+
     // All invariants
     val allInvariants = balanceGreaterZero and
                         posAccountGreaterZero and
@@ -427,7 +447,8 @@ module namada {
                         noSlashingStakeEqualSumBonds and
                         totalAmountTokensConstant and
                         stakeGreaterZero and
-                        boundedBalance
+                        boundedBalance and
+                        bondsGreaterRedelegations
                   
     // All invariants without slash pool
     // Due to the lack of slashing pool posAccountZero and noSlashingStakeEqualSumBonds do not hold
@@ -436,7 +457,8 @@ module namada {
                                        stakeEqualOrLessSumBonds and
                                        totalAmountTokensConstant and
                                        stakeGreaterZero and
-                                       boundedBalance
+                                       boundedBalance and
+                                       bondsGreaterRedelegations
     
     // ****************************************************************************
     // Execution
