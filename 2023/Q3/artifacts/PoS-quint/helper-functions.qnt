@@ -1102,4 +1102,32 @@ module helperFunctions {
         assert(slashValidatorRedelegation("alice", 14, redelegations, [{epoch: 8, rate: 1}], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0))
       }
     }
+
+    // The slashBond function computes how much is left from a bond after applying a set of slashes.
+    // - @param start the epoch at which the bond started.
+    // - @param amount the bonded amount.
+    // - @param redelegatedBond a RedelegatedBondsMap that .
+    // - @param validator the address of the bonding validator.
+    // - @param slashes a map from address validator to a list of slashes.
+    // - @returns the amount of tokens left after slashing.
+    pure def slashBond(start: Epoch, amount: int, redelegatedBond: RedelegatedBondsMap, validator: Address, slashes: Address -> List[Slash]): int = {
+      val listSlashes = slashes.get(validator).select(slash => start <= slash.epoch)
+      val resultFold = foldAndSlashRedelegatedBondsMap(redelegatedBond, start, listSlashes, slashes)
+      val totalNoRedelegated = amount - resultFold.totalRedelegated
+      val afterNoRedelegated = applyListSlashes(listSlashes, totalNoRedelegated)
+      afterNoRedelegated + resultFold.totalAfterSlashing
+    }
+
+    run slashBondTest = {
+      val slashes = VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 4, rate: 1}] else List())
+      all {
+        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => List())) == 30),
+        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 4, rate: 1}] else List())) == 30),
+        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 11, rate: 1}] else List())) == 0),
+        assert(slashBond(10, 30,  Map("bob" -> Map(4 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 5, rate: 1}] else List())) == 20),
+        assert(slashBond(10, 30,  Map("bob" -> Map(4 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 3, rate: 1}] else List())) == 30),
+        assert(slashBond(10, 30,  Map("bob" -> Map(2 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 2, rate: 1}] else List())) == 30),
+      }
+    }
+    
 }

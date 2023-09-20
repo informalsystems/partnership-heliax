@@ -391,7 +391,7 @@ module namada {
     // Invariants
     // *************************************************************************
 
-    // Semantic invariants
+    // PoS invariants
 
     // Invariant 1: A delegator's balance cannot become negative.
     val balanceGreaterZero = USERS.forall(user => delegators.get(user).balance >= 0)
@@ -422,7 +422,14 @@ module namada {
     //Invariant 8: The user's balance cannot become greater than the initial balance
     val boundedBalance = USERS.forall(user => delegators.get(user).balance <= INIT_BALANCE)
 
-    // Non-semantic invariants
+    // Invariant 9: The validator's voting power at a given epoch equal to the total amount of tokens delegated to that validator after applying slashes.
+    val stakeEqualSumSlashedBonds = VALIDATORS.forall(validator => USERS.fold(0, (sum, user) => val bonds = delegators.get(user).bonded.get(validator)
+                                                                                                val slashes = VALIDATORS.mapBy(v => validators.get(v).slashes)
+                                                                                                sum + bonds.keys().fold(0, (total, start) => val redelegatedBond = delegators.get(user).redelegatedBonded.get(validator).getOrElse(start, Map())
+                                                                                                                                             val afterSlashes = slashBond(start, bonds.get(start), redelegatedBond, validator, slashes)
+                                                                                                                                             total + afterSlashes)) == validators.get(validator).stake.get(pos.epoch + PIPELINE_OFFSET))
+
+    // Implementation invariants
 
     // delegator's bonded for a given validator and epoch is always greater or equal than redelegatedBonded for that epoch and validator
     val bondsGreaterRedelegations = USERS.forall(user => 
