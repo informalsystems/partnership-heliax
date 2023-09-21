@@ -875,6 +875,79 @@ module helperFunctions {
       result._4
     }
 
+    // The slashBond function computes how much is left from a bond after applying a set of slashes.
+    // - @param start the epoch at which the bond started.
+    // - @param amount the bonded amount.
+    // - @param redelegatedBond a RedelegatedBondsMap that .
+    // - @param validator the address of the bonding validator.
+    // - @param slashes a map from address validator to a list of slashes.
+    // - @returns the amount of tokens left after slashing.
+    pure def computeBondAtEpoch(epoch: Epoch, start: Epoch, amount: int, validator: Address, slashes: Address -> List[Slash], redelegatedBond: RedelegatedBondsMap): int = {
+       val listSlashes = slashes.get(validator).select(s => epoch <= s.epoch and s.epoch + slashProcessingDelay < epoch)
+       val filteredSlashMap = slashes.keys().mapBy(v => slashes.get(v).select(s => s.epoch + slashProcessingDelay < epoch))
+       val resultFold = foldAndSlashRedelegatedBondsMap(redelegatedBond, start, listSlashes, filteredSlashMap)
+       val totalNoRedelegated = amount - resultFold.totalRedelegated
+       val afterNoRedelegated = applyListSlashes(listSlashes, totalNoRedelegated)
+       afterNoRedelegated + resultFold.totalAfterSlashing
+    }
+
+
+    /*pure def slashBond(start: Epoch, amount: int, redelegatedBond: RedelegatedBondsMap, validator: Address, slashes: Address -> List[Slash]): int = {
+      val listSlashes = slashes.get(validator).select(slash => start <= slash.epoch)
+      val resultFold = foldAndSlashRedelegatedBondsMap(redelegatedBond, start, listSlashes, slashes)
+      val totalNoRedelegated = amount - resultFold.totalRedelegated
+      val afterNoRedelegated = applyListSlashes(listSlashes, totalNoRedelegated)
+      afterNoRedelegated + resultFold.totalAfterSlashing
+    }
+
+    run slashBondTest = {
+      val slashes = VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 4, rate: 1}] else List())
+      all {
+        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => List())) == 30),
+        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 4, rate: 1}] else List())) == 30),
+        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 11, rate: 1}] else List())) == 0),
+        assert(slashBond(10, 30,  Map("bob" -> Map(4 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 5, rate: 1}] else List())) == 20),
+        assert(slashBond(10, 30,  Map("bob" -> Map(4 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 3, rate: 1}] else List())) == 30),
+        assert(slashBond(10, 30,  Map("bob" -> Map(2 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 2, rate: 1}] else List())) == 30),
+      }*/
+      
+    pure def computeSlashBondAtEpoch(epoch: Epoch, infractionEpoch: Epoch, bondStart: Epoch, bondAmount: int, redelegatedBond: RedelegatedBondsMap, slashRate: int, validator: Address, slashes: Address -> List[Slash]): int = {
+      val AmountDue = computeBondAtEpoch(infractionEpoch, bondStart, bondAmount, validator, slashes, redelegatedBond)*slashRate
+      val SlashableAmount = computeBondAtEpoch(epoch, bondStart, bondAmount, validator, slashes, redelegatedBond)
+      min(AmountDue, SlashableAmount) 
+    }
+
+    pure def newSlashValidator(validator: Address,
+                               curEpoch: Epoch,
+                               slashes: Address -> List[Slash],
+                               totalUnbonded: Epoch -> Epoch -> int,
+                               totalRedelegatedUnbonded: Epoch -> Epoch -> RedelegatedBondsMap,
+                               totalBonded: Epoch -> int,
+                               totalRedelegatedBonded: Epoch -> RedelegatedBondsMap,
+                               finalRate: int,
+                               slashesMap: Epoch -> int): Epoch -> int = {
+      val infractionEpoch = curEpoch - slashProcessingDelay
+      val bonds = totalBonded.keys().filter(e => e <= infractionEpoch).mapBy(start => totalBonded.get(start))
+      val redelegatedBonds = bonds.keys().mapBy(e => totalRedelegatedBonded.getOrElse(e, Map()))
+      val epochRange = (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).sortSetDecreasing()
+      epochRange.foldl({bonds: bonds,
+                        redelegatedBonds: redelegatedBonds,
+                        sum: 0, 
+                        slashesMap: slashesMap}, (acc, epoch) => val amount = acc.bonds.keys().fold(0, (total, bondStart) => total + computeSlashBondAtEpoch(epoch,
+                                                                                                                                                             infractionEpoch,
+                                                                                                                                                             bondStart,
+                                                                                                                                                             acc.bonds.get(bondStart),                                                                                                                
+                                                                                                                                                             acc.redelegatedBonds.get(bondStart),
+                                                                                                                                                             finalRate,
+                                                                                                                                                             validator,
+                                                                                                                                                             slashes))
+                                                                 val newBonds = totalUnbonded.get(epoch)
+                                                                 val newRedelegatedBonds = newBonds.keys().mapBy(e => totalRedelegatedUnbonded.getOrElse(e, Map()))
+                                                                 val newSum = acc.sum + amount
+                                                                 val newSlashesMap = acc.slashesMap.set(epoch, slashesMap.get(epoch) + newSum)
+                                                                 {bonds: newBonds, redelegatedBonds: newRedelegatedBonds, sum: newSum, slashesMap: newSlashesMap}).slashesMap                                                                      
+    }
+
     run slashValidatorTest = {
       val infractionStake = 23
       val curEpoch = 10
@@ -1101,33 +1174,6 @@ module helperFunctions {
         assert(slashValidatorRedelegation("alice", 14, redelegations, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 5, 16 -> 5)),
         assert(slashValidatorRedelegation("alice", 14, redelegations, [], totalRedelegatedUnbonded, 1, Map(15 -> 2, 16 -> 3)) == Map(15 -> 7, 16 -> 8)),
         assert(slashValidatorRedelegation("alice", 14, redelegations, [{epoch: 8, rate: 1}], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0))
-      }
-    }
-
-    // The slashBond function computes how much is left from a bond after applying a set of slashes.
-    // - @param start the epoch at which the bond started.
-    // - @param amount the bonded amount.
-    // - @param redelegatedBond a RedelegatedBondsMap that .
-    // - @param validator the address of the bonding validator.
-    // - @param slashes a map from address validator to a list of slashes.
-    // - @returns the amount of tokens left after slashing.
-    pure def slashBond(start: Epoch, amount: int, redelegatedBond: RedelegatedBondsMap, validator: Address, slashes: Address -> List[Slash]): int = {
-      val listSlashes = slashes.get(validator).select(slash => start <= slash.epoch)
-      val resultFold = foldAndSlashRedelegatedBondsMap(redelegatedBond, start, listSlashes, slashes)
-      val totalNoRedelegated = amount - resultFold.totalRedelegated
-      val afterNoRedelegated = applyListSlashes(listSlashes, totalNoRedelegated)
-      afterNoRedelegated + resultFold.totalAfterSlashing
-    }
-
-    run slashBondTest = {
-      val slashes = VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 4, rate: 1}] else List())
-      all {
-        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => List())) == 30),
-        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 4, rate: 1}] else List())) == 30),
-        assert(slashBond(10, 30,  Map(), "alice", VALIDATORS.mapBy(v => if (v == "alice") [{epoch: 11, rate: 1}] else List())) == 0),
-        assert(slashBond(10, 30,  Map("bob" -> Map(4 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 5, rate: 1}] else List())) == 20),
-        assert(slashBond(10, 30,  Map("bob" -> Map(4 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 3, rate: 1}] else List())) == 30),
-        assert(slashBond(10, 30,  Map("bob" -> Map(2 -> 10)), "alice", VALIDATORS.mapBy(v => if (v == "bob") [{epoch: 2, rate: 1}] else List())) == 30),
       }
     }
     
