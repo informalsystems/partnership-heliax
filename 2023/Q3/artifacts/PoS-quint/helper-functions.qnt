@@ -882,7 +882,7 @@ module helperFunctions {
     // - @param validator the address of the bonding validator.
     // - @param slashes a map from address validator to a list of slashes.
     // - @returns the amount of tokens left after slashing.
-    pure def computeBondAtEpoch(epoch: Epoch, start: Epoch, amount: int, validator: Address, slashes: Address -> List[Slash], redelegatedBond: RedelegatedBondsMap): int = {
+    pure def computeBondAtEpoch(epoch: Epoch, start: Epoch, amount: int, redelegatedBond: RedelegatedBondsMap, validator: Address, slashes: Address -> List[Slash]): int = {
        val listSlashes = slashes.get(validator).select(s => epoch <= s.epoch and s.epoch + slashProcessingDelay < epoch)
        val filteredSlashMap = slashes.keys().mapBy(v => slashes.get(v).select(s => s.epoch + slashProcessingDelay < epoch))
        val resultFold = foldAndSlashRedelegatedBondsMap(redelegatedBond, start, listSlashes, filteredSlashMap)
@@ -912,8 +912,8 @@ module helperFunctions {
       }*/
       
     pure def computeSlashBondAtEpoch(epoch: Epoch, infractionEpoch: Epoch, bondStart: Epoch, bondAmount: int, redelegatedBond: RedelegatedBondsMap, slashRate: int, validator: Address, slashes: Address -> List[Slash]): int = {
-      val AmountDue = computeBondAtEpoch(infractionEpoch, bondStart, bondAmount, validator, slashes, redelegatedBond)*slashRate
-      val SlashableAmount = computeBondAtEpoch(epoch, bondStart, bondAmount, validator, slashes, redelegatedBond)
+      val AmountDue = computeBondAtEpoch(infractionEpoch, bondStart, bondAmount, redelegatedBond, validator, slashes)*slashRate
+      val SlashableAmount = computeBondAtEpoch(epoch, bondStart, bondAmount, redelegatedBond, validator, slashes)
       min(AmountDue, SlashableAmount) 
     }
 
@@ -1175,6 +1175,32 @@ module helperFunctions {
         assert(slashValidatorRedelegation("alice", 14, redelegations, [], totalRedelegatedUnbonded, 1, Map(15 -> 2, 16 -> 3)) == Map(15 -> 7, 16 -> 8)),
         assert(slashValidatorRedelegation("alice", 14, redelegations, [{epoch: 8, rate: 1}], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0))
       }
+    }
+
+    // Contract:
+    // - Any epoch in bondsToSubtract.keys() is in totalBonded.keys()
+    // - Given any epoch in bondsToSubtract.keys(), totalBonded.get(start) >= bondsToSubtract.get(start)
+    pure def subtractBondsFromTotalBonded(totalBonded: Epoch -> int, bondsToSubtract: Epoch -> int): Epoch -> int = {
+      val filteredKeys = totalBonded.keys().filter(epoch => bondsToSubtract.has(epoch) implies totalBonded.get(epoch) > bondsToSubtract.get(epoch))
+      filteredKeys.mapBy(epoch => if (bondsToSubtract.has(epoch)) totalBonded.get(epoch) - bondsToSubtract.get(epoch)
+                                  else totalBonded.get(epoch))
+    }
+
+    pure def subtractFromRedelegatedBondsMap(srcMap: RedelegatedBondsMap, subtractMap: RedelegatedBondsMap): RedelegatedBondsMap = {
+      val filteredKeys = srcMap.keys().filter(src => subtractMap.has(src) implies foldBondsMap(srcMap.get(src)) > foldBondsMap(subtractMap.get(src)))
+      filteredKeys.mapBy(src => if (subtractMap.has(src)) subtractBondsFromTotalBonded(srcMap.get(src), subtractMap.get(src))
+                                else srcMap.get(src))
+    }
+
+    // Contract:
+    // - Any epoch in redelegationsToSubtract.keys() is in totalRedelegatedBonded.keys()
+    // - Given any epoch any redelegation in redelegationsToSubtract.keys() is also in totalRedelegatedBonded.get(start).
+    //   This implies that the total amount of redelegated tokens for any of those epochs in totalRedelegatedBonded is greater
+    //   or equal to the total amount of redelegated tokens for that epoch in redelegationsToSubtract.
+    pure def subtractRedelegationsFromTotalRedelegatedBonded(totalRedelegatedBonded: Epoch -> RedelegatedBondsMap, redelegationsToSubtract: Epoch -> RedelegatedBondsMap): Epoch -> RedelegatedBondsMap = {
+      val filteredKeys = totalRedelegatedBonded.keys().filter(epoch => redelegationsToSubtract.has(epoch) implies foldRedelegatedBondsMap(totalRedelegatedBonded.get(epoch)) > foldRedelegatedBondsMap(redelegationsToSubtract.get(epoch)))
+      filteredKeys.mapBy(epoch => if (redelegationsToSubtract.has(epoch)) subtractFromRedelegatedBondsMap(totalRedelegatedBonded.get(epoch), redelegationsToSubtract.get(epoch))
+                                  else totalRedelegatedBonded.get(epoch))
     }
     
 }
