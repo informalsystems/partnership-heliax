@@ -225,15 +225,15 @@ module namada {
                           validatorsState: Address -> ValidatorState,
                           slashes: Address -> List[Slash]): Address -> Epoch -> int = { 
       val infractionEpoch = curEpoch - slashProcessingDelay
-      val resultSlashValidator = newSlashValidator(misbehavingValidator,
-                                                   curEpoch,
-                                                   slashes,
-                                                   validatorsState.get(misbehavingValidator).totalUnbonded,
-                                                   validatorsState.get(misbehavingValidator).totalRedelegatedUnbonded,
-                                                   validatorsState.get(misbehavingValidator).totalBonded,
-                                                   validatorsState.get(misbehavingValidator).totalRedelegatedBonded,                                            
-                                                   slashRate,
-                                                   slashedAmountMap.get(misbehavingValidator))
+      val resultSlashValidator = slashValidator(misbehavingValidator,
+                                                curEpoch,
+                                                slashes,
+                                                validatorsState.get(misbehavingValidator).totalUnbonded,
+                                                validatorsState.get(misbehavingValidator).totalRedelegatedUnbonded,
+                                                validatorsState.get(misbehavingValidator).totalBonded,
+                                                validatorsState.get(misbehavingValidator).totalRedelegatedBonded,                                            
+                                                slashRate,
+                                                slashedAmountMap.get(misbehavingValidator))
       val updatedSlashedAmountMap = slashedAmountMap.set(misbehavingValidator, resultSlashValidator)
       val outgoingRedelegations = validatorsState.get(misbehavingValidator).outgoingRedelegations
       outgoingRedelegations.keys().fold(updatedSlashedAmountMap, (acc, destValidator) => acc.set(destValidator, slashValidatorRedelegation(misbehavingValidator,
