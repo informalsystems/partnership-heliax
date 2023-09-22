@@ -1115,9 +1115,9 @@ module helperFunctions {
       val totalRedelegatedUnbonded = Map(10 -> Map(), 11 -> Map(), 12 -> Map(), 13 -> Map(10 -> Map("alice" -> Map(7 -> 2))), 14 -> Map(), 15 -> Map(), 16 -> Map(), 9 -> Map())
       val slashedAmountsMap = Map(15 -> 0, 16 -> 0)
       all {
-        assert(slashRedelegation(7, 7, 10, "alice", 14, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 5, 16 -> 5)),
-        assert(slashRedelegation(7, 7, 11, "alice", 14, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 7, 16 -> 7)),
-        assert(slashRedelegation(7, 7, 10, "alice", 14, [], totalRedelegatedUnbonded, 1,  Map(15 -> 2, 16 -> 3)) == Map(15 -> 7, 16 -> 8)),
+        assert(slashRedelegation(7, 7, 10, "alice", 14, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 5)),
+        assert(slashRedelegation(7, 7, 11, "alice", 14, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 7)),
+        assert(slashRedelegation(7, 7, 10, "alice", 14, [], totalRedelegatedUnbonded, 1,  Map(15 -> 2, 16 -> 3)) == Map(15 -> 2, 16 -> 8)),
         // existing slash processed before the one being computed
         assert(slashRedelegation(7, 7, 10, "alice", 14, [{epoch: 8, rate: 1}], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0)),
         // existing slash not processed before the one being computed
@@ -1170,9 +1170,9 @@ module helperFunctions {
       all {
         assert(slashValidatorRedelegation("alice", 14,  Map(), [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0)),
         assert(slashValidatorRedelegation("alice", 14,  Map(), [], Map(), 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0)),
-        assert(slashValidatorRedelegation("alice", 14,  Map((6, 8) -> 7), [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 7, 16 -> 7)),
-        assert(slashValidatorRedelegation("alice", 14, redelegations, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 5, 16 -> 5)),
-        assert(slashValidatorRedelegation("alice", 14, redelegations, [], totalRedelegatedUnbonded, 1, Map(15 -> 2, 16 -> 3)) == Map(15 -> 7, 16 -> 8)),
+        assert(slashValidatorRedelegation("alice", 14,  Map((6, 8) -> 7), [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 7)),
+        assert(slashValidatorRedelegation("alice", 14, redelegations, [], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 5)),
+        assert(slashValidatorRedelegation("alice", 14, redelegations, [], totalRedelegatedUnbonded, 1, Map(15 -> 2, 16 -> 3)) == Map(15 -> 2, 16 -> 8)),
         assert(slashValidatorRedelegation("alice", 14, redelegations, [{epoch: 8, rate: 1}], totalRedelegatedUnbonded, 1, slashedAmountsMap) == Map(15 -> 0, 16 -> 0))
       }
     }
