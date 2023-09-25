@@ -35,7 +35,7 @@ The artifacts and its current state is summarized in the following artifacts tab
 | 3 | [Model based testing framework](https://github.com/informalsystems/partnership-heliax/tree/trunk/2023/Q1/artifacts/PoS-mbt) | Finalized Q1 2023 | N/A | |
 | 4 | [Pseudocode model with redelegation](https://github.com/informalsystems/partnership-heliax/blob/manuel/redelegation-q1/2023/Q1/artifacts/PoS-pseudocode/PoS-model-redelegation.md) | Ongoing | manuel/redelegation-q1 | Pending: (i) integrate the latest slashing with redelegation, which consists of integrating the cubic offset and preventing validators' stakes to become negative; and (ii) fix the issues found while modeling redelegation in Quint |
 | 5 | [Quint specification without redelegation](https://github.com/informalsystems/partnership-heliax/blob/trunk/2023/Q2/artifacts/PoS-quint/namada.qnt) | Finalized Q2 2024 | N/A |  |
-| 6 | [Quint specification with redelegation](https://github.com/informalsystems/partnership-heliax/tree/trunk/2023/Q3/artifacts/PoS-quint) | Ongoing | manuel/quint-issue-69 | Pending: slashing destination validators after the pipeline offset|
+| 6 | [Quint specification with redelegation](https://github.com/informalsystems/partnership-heliax/tree/trunk/2023/Q3/artifacts/PoS-quint) | Ongoing | manuel/fix-slashValidator | Pending: fix `slashValidator` |
 
 ### To clone just the artifacts Informal created during the audit
 
