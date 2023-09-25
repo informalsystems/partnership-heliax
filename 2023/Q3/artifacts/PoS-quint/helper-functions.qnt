@@ -840,7 +840,6 @@ module helperFunctions {
     // - @returns the amount of tokens left after slashing.
     pure def computeBondAtEpoch(epoch: Epoch, start: Epoch, amount: int, redelegatedBond: RedelegatedBondsMap, validator: Address, slashes: Address -> List[Slash]): int = {
        val listSlashes = slashes.get(validator).select(s => start <= s.epoch and s.epoch + slashProcessingDelay < epoch)
-       val x = printVariable("listSlashes", listSlashes)
        val filteredSlashMap = slashes.keys().mapBy(v => slashes.get(v).select(s => s.epoch + slashProcessingDelay < epoch))
        val resultFold = foldAndSlashRedelegatedBondsMap(redelegatedBond, start, listSlashes, filteredSlashMap)
        val totalNoRedelegated = amount - resultFold.totalRedelegated
@@ -850,7 +849,16 @@ module helperFunctions {
 
     run computeBondAtEpochTest = {
       all {
-        assert(computeBondAtEpoch(12, 3, 23, Map(), "bob", Map("alice" -> [], "bob" -> [{ epoch: 4, rate: 1 }])) == 0)
+        // no previous slashes and no redelegations
+        assert(computeBondAtEpoch(12, 3, 23, Map(), "bob", Map("alice" -> [], "bob" -> [])) == 23),
+        // no redelegation, one previous slash
+        assert(computeBondAtEpoch(12, 3, 23, Map(), "bob", Map("alice" -> [], "bob" -> [{ epoch: 4, rate: 1 }])) == 0),
+        // redelegation but no slashes for that validator, also no slash for main validator
+        assert(computeBondAtEpoch(12, 3, 23, Map("alice" -> Map(1 -> 5)), "bob", Map("alice" -> [], "bob" -> [])) == 23),
+        // redelegation but no slashes for that validator, but slash for the main validator
+        assert(computeBondAtEpoch(12, 3, 23, Map("alice" -> Map(1 -> 5)), "bob", Map("alice" -> [], "bob" -> [{ epoch: 4, rate: 1 }])) == 0),
+        // redelegation with slash for that validator, but no slash for the main validator
+        assert(computeBondAtEpoch(12, 3, 23, Map("alice" -> Map(1 -> 5)), "bob", Map("alice" -> [{ epoch: 4, rate: 1 }], "bob" -> [])) == 23),
       }
     }
       
@@ -896,7 +904,7 @@ module helperFunctions {
                                                                                                                                                              validator,
                                                                                                                                                              slashes))
                                                                  val newBonds = totalUnbonded.get(epoch)
-                                                                 val newRedelegatedBonds = newBonds.keys().mapBy(e => totalRedelegatedUnbonded.getOrElse(e, Map()))
+                                                                 val newRedelegatedBonds = newBonds.keys().mapBy(e => totalRedelegatedUnbonded.get(epoch).getOrElse(e, Map()))
                                                                  val newSum = acc.sum + amount
                                                                  val newSlashesMap = acc.slashesMap.set(epoch, slashesMap.get(epoch) + newSum)
                                                                  {bonds: newBonds, redelegatedBonds: newRedelegatedBonds, sum: newSum, slashesMap: newSlashesMap}).slashesMap                                                                      
@@ -922,6 +930,46 @@ module helperFunctions {
                               emptytotalRedelegatedBonded,
                               rate,
                               emptySlashAmountsMap) == (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 23)),
+        // part of the infraction stake is unbonded before the evidence is submitted
+        assert(slashValidator("bob",
+                              curEpoch,
+                              emptySlashes,
+                              emptyTotalUnbonded.set(curEpoch+PIPELINE_OFFSET, Map(infractionEpoch-2 -> 6)),
+                              emptyTotalRedelegatedUnbonded,
+                              Map(infractionEpoch-2 -> 17), //totalBonded
+                              emptytotalRedelegatedBonded,
+                              rate,
+                              emptySlashAmountsMap) == (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => if (e == curEpoch+PIPELINE_OFFSET) 17 else 23)),
+        // part of the infraction stake is redelagated and is unbonded before the evidence is submitted
+        assert(slashValidator("bob",
+                              curEpoch,
+                              emptySlashes,
+                              emptyTotalUnbonded.set(curEpoch+PIPELINE_OFFSET, Map(infractionEpoch-2 -> 6)),
+                              emptyTotalRedelegatedUnbonded,
+                              Map(infractionEpoch-2 -> 17), //totalBonded
+                              Map(infractionEpoch-1 -> Map("alice" -> Map(2 -> 5, 3 -> 1))), //totalRedelegatedBonded
+                              rate,
+                              emptySlashAmountsMap) == (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => if (e == curEpoch+PIPELINE_OFFSET) 17 else 23)),
+        // part of the infraction stake is redelagated and those redelegated tokens are unbonded before the evidence is submitted
+        assert(slashValidator("bob",
+                              curEpoch,
+                              emptySlashes,
+                              emptyTotalUnbonded.set(curEpoch+PIPELINE_OFFSET, Map(infractionEpoch-1 -> 6)),
+                              emptyTotalRedelegatedUnbonded.set(curEpoch+PIPELINE_OFFSET, Map(infractionEpoch-1  -> Map("alice" -> Map(2 -> 5, 3 -> 1)))),
+                              Map(infractionEpoch-2 -> 17), //totalBonded
+                              Map(infractionEpoch-1 -> Map("alice" -> Map(2 -> 5, 3 -> 1))), //totalRedelegatedBonded
+                              rate,
+                              emptySlashAmountsMap) == (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => if (e == curEpoch+PIPELINE_OFFSET) 17 else 23)),
+        // part of the infraction stake is redelagated and some of those redelegated tokens are unbonded before the evidence is submitted
+        assert(slashValidator("bob",
+                              curEpoch,
+                              emptySlashes,
+                              emptyTotalUnbonded.set(curEpoch+PIPELINE_OFFSET, Map(infractionEpoch-1 -> 4)),
+                              emptyTotalRedelegatedUnbonded.set(curEpoch+PIPELINE_OFFSET, Map(infractionEpoch-1 -> Map("alice" -> Map(2 -> 4)))),
+                              Map(infractionEpoch-2 -> 19), //totalBonded
+                              Map(infractionEpoch-1 -> Map("alice" -> Map(2 -> 1, 3 -> 1))), //totalRedelegatedBonded
+                              rate,
+                              emptySlashAmountsMap) == (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => if (e == curEpoch+PIPELINE_OFFSET) 19 else 23)),
         // there is a bond happening at curEpoch
         assert(slashValidator("bob",
                               curEpoch,
