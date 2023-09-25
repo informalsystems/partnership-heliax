@@ -448,6 +448,7 @@ module namada {
                         totalAmountTokensConstant and
                         stakeGreaterZero and
                         boundedBalance and
+                        stakeEqualSumSlashedBonds and
                         bondsGreaterRedelegations
                   
     // All invariants without slash pool
@@ -458,6 +459,8 @@ module namada {
                                        totalAmountTokensConstant and
                                        stakeGreaterZero and
                                        boundedBalance and
+                                       // the following two only make sense in the context of redelegations
+                                       stakeEqualSumSlashedBonds and
                                        bondsGreaterRedelegations
     
     // ****************************************************************************
