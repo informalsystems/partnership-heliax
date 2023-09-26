@@ -783,7 +783,7 @@ module helperFunctions {
     // - @param epoch an epoch upper-bound that determines which slashes are included: those that were processed before.
     // - @param start the epoch at which the bond started.
     // - @param amount the bonded amount.
-    // - @param redelegatedBond a RedelegatedBondsMap that .
+    // - @param redelegatedBond a RedelegatedBondsMap.
     // - @param validator the address of the bonding validator.
     // - @param slashes a map from address validator to a list of slashes.
     // - @returns the amount of tokens left after slashing.
@@ -813,18 +813,38 @@ module helperFunctions {
       }
     }
     
-    // The computeBondAtEpoch function computes how much is left from a bond after applying a set of slashes.
-    // - @param epoch an epoch upper-bound that determines which slashes are included: those that were processed before.
-    // - @param start the epoch at which the bond started.
-    // - @param amount the bonded amount.
-    // - @param redelegatedBond a RedelegatedBondsMap that .
+    // Given a slash and epoch, the computeSlashBondAtEpoch function computes how much can be slashed from the bond at the considered epoch
+    // considering that the bond might have been already slashed.
+    // for the same stake.
+    // - @param epoch the epoch at which we want to compute the slashable amount for.
+    // - @param infractionEpoch the slash infraction epoch.
+    // - @param bondStart the epoch at which the bond started.
+    // - @param bondAmount the bonded amount.
+    // - @param redelegatedBond a RedelegatedBondsMap to consider when computing how much is left.
+    // = @param slashRate the slash final rate.
     // - @param validator the address of the bonding validator.
     // - @param slashes a map from address validator to a list of slashes.
-    // - @returns the amount of tokens left after slashing.
+    // - @returns the amount of tokens that can be slashed at the given epoch.
     pure def computeSlashBondAtEpoch(epoch: Epoch, infractionEpoch: Epoch, bondStart: Epoch, bondAmount: int, redelegatedBond: RedelegatedBondsMap, slashRate: int, validator: Address, slashes: Address -> List[Slash]): int = {
       val AmountDue = computeBondAtEpoch(infractionEpoch, bondStart, bondAmount, redelegatedBond, validator, slashes)*slashRate
       val SlashableAmount = computeBondAtEpoch(epoch, bondStart, bondAmount, redelegatedBond, validator, slashes)
       min(AmountDue, SlashableAmount) 
+    }
+
+    run computeSlashBondAtEpochTest = {
+      val curEpoch = 20
+      val infractionEpoch = curEpoch - slashProcessingDelay
+      val redelegatedBond = Map("alice" -> Map(infractionEpoch-4 -> 10))
+      all {
+        // no other slash, no redelegation
+        assert(computeSlashBondAtEpoch(curEpoch+1, infractionEpoch, infractionEpoch-2, 30, Map(), 1, "bob", Map("alice" -> [], "bob" -> [])) == 30),
+        // no other slash, redelegation
+        assert(computeSlashBondAtEpoch(curEpoch+1, infractionEpoch, infractionEpoch-2, 30, redelegatedBond, 1, "bob", Map("alice" -> [], "bob" -> [])) == 30),
+        // other slash, no redelegation
+        assert(computeSlashBondAtEpoch(curEpoch+1, infractionEpoch, infractionEpoch-2, 30, Map(), 1, "bob", Map("alice" -> [], "bob" -> [{epoch: infractionEpoch-1, rate: 1}])) == 0),
+        // other slash, redelegation
+        assert(computeSlashBondAtEpoch(curEpoch+1, infractionEpoch, infractionEpoch-2, 30, redelegatedBond, 1, "bob", Map("alice" -> [], "bob" -> [{epoch: infractionEpoch-1, rate: 1}])) == 0),
+      }
     }
 
     // The slashValidator function computes for a given validator and a slash how much should be slashed at all epochs between the currentå
@@ -862,7 +882,8 @@ module helperFunctions {
                                                                                                                                                              finalRate,
                                                                                                                                                              validator,
                                                                                                                                                              slashes))
-                                                                 val newBonds = totalUnbonded.get(epoch)
+                                                                 val newBonds = val keysBonds = totalUnbonded.get(epoch).keys().filter(e => e <= infractionEpoch)
+                                                                                keysBonds.mapBy(start => totalUnbonded.get(epoch).get(start))
                                                                  val newRedelegatedBonds = newBonds.keys().mapBy(e => totalRedelegatedUnbonded.get(epoch).getOrElse(e, Map()))
                                                                  val newSum = acc.sum + amount
                                                                  val newSlashesMap = acc.slashesMap.set(epoch, slashesMap.get(epoch) + newSum)
@@ -1118,21 +1139,57 @@ module helperFunctions {
       }
     }
     
+    // The function subtractBondsFromTotalBonded removes a set of bonds from a map of bonds.
+    // - @param srcMap a map of bonds from which to subtract bonds.
+    // - @param subtractMap a map of bonds to be subtracted.
+    // - @returns an updated srcMap without the bonds in subtractMap.
     // Contract:
-    // - Any epoch in bondsToSubtract.keys() is in totalBonded.keys()
-    // - Given any epoch in bondsToSubtract.keys(), totalBonded.get(start) >= bondsToSubtract.get(start)
-    pure def subtractBondsFromTotalBonded(totalBonded: Epoch -> int, bondsToSubtract: Epoch -> int): Epoch -> int = {
-      val filteredKeys = totalBonded.keys().filter(epoch => bondsToSubtract.has(epoch) implies totalBonded.get(epoch) > bondsToSubtract.get(epoch))
-      filteredKeys.mapBy(epoch => if (bondsToSubtract.has(epoch)) totalBonded.get(epoch) - bondsToSubtract.get(epoch)
-                                  else totalBonded.get(epoch))
+    // - Any epoch in subtractMap.keys() is in srcMap.keys()
+    // - Given any epoch in subtractMap.keys(), srcMap.get(start) >= subtractMap.get(start)
+    pure def subtractBondsFromTotalBonded(srcMap: Epoch -> int, subtractMap: Epoch -> int): Epoch -> int = {
+      val filteredKeys = srcMap.keys().filter(epoch => subtractMap.has(epoch) implies srcMap.get(epoch) > subtractMap.get(epoch))
+      filteredKeys.mapBy(epoch => if (subtractMap.has(epoch)) srcMap.get(epoch) - subtractMap.get(epoch)
+                                  else srcMap.get(epoch))
     }
 
+    run subtractBondsFromTotalBondedTest = {
+      all {
+        assert(subtractBondsFromTotalBonded(Map(), Map()) == Map()),
+        assert(subtractBondsFromTotalBonded(Map(3 -> 5, 5 -> 6), Map()) == Map(3 -> 5, 5 -> 6)),
+        assert(subtractBondsFromTotalBonded(Map(3 -> 5, 5 -> 6), Map(5 -> 6)) == Map(3 -> 5)),
+        assert(subtractBondsFromTotalBonded(Map(3 -> 5, 5 -> 6), Map(5 -> 3)) == Map(3 -> 5, 5 -> 3)),
+        assert(subtractBondsFromTotalBonded(Map(3 -> 5, 5 -> 6), Map(3 -> 5, 5 -> 6)) == Map()),
+      }
+    }
+
+    // The function subtractFromRedelegatedBondsMap removes a set of redelegated bonds from a map of redelegated bonds.
+    // - @param srcMap a map of redelegated bonds from which to subtract bonds.
+    // - @param subtractMap a map of redelegated bonds to be subtracted.
+    // - @returns an updated srcMap without the redelegated bonds in subtractMap.
+    // Contract:
+    // - Any epoch in subtractMap.keys() is in srcMap.keys()
+    // - Given any source validator (src) in subtractMap.keys(), foldBondsMap(srcMap.get(src)) >= foldBondsMap(subtractMap.get(src))
     pure def subtractFromRedelegatedBondsMap(srcMap: RedelegatedBondsMap, subtractMap: RedelegatedBondsMap): RedelegatedBondsMap = {
       val filteredKeys = srcMap.keys().filter(src => subtractMap.has(src) implies foldBondsMap(srcMap.get(src)) > foldBondsMap(subtractMap.get(src)))
       filteredKeys.mapBy(src => if (subtractMap.has(src)) subtractBondsFromTotalBonded(srcMap.get(src), subtractMap.get(src))
                                 else srcMap.get(src))
     }
 
+    run subtractFromRedelegatedBondsMapTest = {
+      val srcMap = Map("alice" -> Map(3 -> 5, 5 -> 6), "bob" -> Map(2 -> 6, 7 -> 8))
+      all {
+        assert(subtractFromRedelegatedBondsMap(Map(), Map()) == Map()),
+        assert(subtractFromRedelegatedBondsMap(srcMap, Map()) == srcMap),
+        assert(subtractFromRedelegatedBondsMap(srcMap, Map("alice" -> Map(3 -> 5, 5 -> 6))) == Map("bob" -> Map(2 -> 6, 7 -> 8))),
+        assert(subtractFromRedelegatedBondsMap(srcMap, Map("alice" -> Map(3 -> 5))) == Map("alice" -> Map(5 -> 6), "bob" -> Map(2 -> 6, 7 -> 8))),
+        assert(subtractFromRedelegatedBondsMap(srcMap, srcMap) == Map()),
+      }
+    }
+
+    // The function subtractRedelegationsFromTotalRedelegatedBonded removes a the set of redelegated bonds from a map of redelegated bonds.
+    // - @param totalRedelegatedBonded a map from epoch to RedelegatedBondsMap from which to subtract redelegate bonds.
+    // - @param redelegationsToSubtract a map epoch to RedelegatedBondsMap with the redelegated bonds to be subtracted.
+    // - @returns an updated totalRedelegatedBonded without the redelegated bonds in redelegationsToSubtract.
     // Contract:
     // - Any epoch in redelegationsToSubtract.keys() is in totalRedelegatedBonded.keys()
     // - Given any epoch any redelegation in redelegationsToSubtract.keys() is also in totalRedelegatedBonded.get(start).
@@ -1142,5 +1199,18 @@ module helperFunctions {
       val filteredKeys = totalRedelegatedBonded.keys().filter(epoch => redelegationsToSubtract.has(epoch) implies foldRedelegatedBondsMap(totalRedelegatedBonded.get(epoch)) > foldRedelegatedBondsMap(redelegationsToSubtract.get(epoch)))
       filteredKeys.mapBy(epoch => if (redelegationsToSubtract.has(epoch)) subtractFromRedelegatedBondsMap(totalRedelegatedBonded.get(epoch), redelegationsToSubtract.get(epoch))
                                   else totalRedelegatedBonded.get(epoch))
+    }
+
+    run subtractRedelegationsFromTotalRedelegatedBondedTest = {
+      val srcMapEpoch5 = Map("alice" -> Map(3 -> 5, 5 -> 6), "bob" -> Map(2 -> 6, 7 -> 8))
+      val srcMapEpoch7 = Map("alice" -> Map(8 -> 12, 5 -> 6))
+      val srcMap = Map(5 -> srcMapEpoch5, 7 -> srcMapEpoch7)
+      all {
+        assert(subtractRedelegationsFromTotalRedelegatedBonded(Map(), Map()) == Map()),
+        assert(subtractRedelegationsFromTotalRedelegatedBonded(srcMap, Map()) == srcMap),
+        assert(subtractRedelegationsFromTotalRedelegatedBonded(srcMap, Map(5 -> srcMapEpoch5)) == Map(7 -> srcMapEpoch7)),
+        assert(subtractRedelegationsFromTotalRedelegatedBonded(srcMap, Map(5 -> Map("alice" -> Map(3 -> 5, 5 -> 6)))) == Map(5 -> Map("bob" -> Map(2 -> 6, 7 -> 8)), 7 -> srcMapEpoch7)),
+        assert(subtractRedelegationsFromTotalRedelegatedBonded(srcMap, srcMap) == Map()),
+      }
     }
 }
