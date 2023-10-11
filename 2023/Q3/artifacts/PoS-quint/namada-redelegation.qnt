@@ -259,9 +259,7 @@ module namada {
       val infractionEpoch = posState.epoch - CUBIC_OFFSET - UNBONDING_OFFSET
       val slashPerValidator = posState.enqueuedSlashes.get(curEpoch).fold(Map(), (acc, slash) => acc.mapSafeSet(slash.validator, min(1, acc.getOrElse(slash.validator, 0) + finalRate)))
       val slashesMap = VALIDATORS.mapBy(v => validatorsState.get(v).slashes)
-      val resultSlashing = slashPerValidator.keys().fold((initMap, slashesMap), (acc, validator) => (processSlash(validator, slashPerValidator.get(validator), curEpoch, acc._1, validatorsState, acc._2), 
-                                                                                                     acc._2.set(validator, acc._2.get(validator).append({epoch: infractionEpoch, rate: slashPerValidator.get(validator)}))))
-      val mapValidatorSlash = resultSlashing._1
+      val mapValidatorSlash = slashPerValidator.keys().fold(initMap, (acc, validator) => processSlash(validator, slashPerValidator.get(validator), curEpoch, acc, validatorsState, slashesMap))
       val updatedValidators = VALIDATORS.mapBy(v => validatorsState.get(v).with("stake",(curEpoch-UNBONDING_OFFSET-CUBIC_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).stake.get(e) -
                                                                                                                                                                               if (e >= curEpoch+1) mapValidatorSlash.get(v).get(e) else 0
                                                                                                                                                                              else validatorsState.get(v).stake.get(e-1) - mapValidatorSlash.get(v).get(e-1))) 
