@@ -33,11 +33,11 @@ module namada {
     // 0: no limit
     // 1: limited but it allows multiple infractions with the same stake
     // 2: disallow multiple infractions with the same stake
-    pure val limitEvidence = 2
+    pure val limitEvidence = 0
 
     // Used to guarantee every step produces a state transition
     // IMPORTANT: Set to false for tests
-    pure val enforceStateTransition = true
+    pure val enforceStateTransition = false
 
     // Last transaction executed by step.
     // Amount is over used by the actions:
