@@ -71,7 +71,11 @@ module types {
     unbonded: Address -> (Epoch, Epoch) -> int,
     // User's unbonds that come from redelegations: a map from validator to a map storing the redelegtated tokens that the user has unbonded (not yet withdrawn)/
     // The latter maps the pair bond starting epoch and unbond ending epoch to a RedelegatedBondsMap (from source validator to a map of bonds from bond starting epoch at the source validator to amount of tokens)
-    redelegatedUnbonded: Address -> (Epoch, Epoch) -> RedelegatedBondsMap
+    redelegatedUnbonded: Address -> (Epoch, Epoch) -> RedelegatedBondsMap,
+    rewards: Address -> Dec,
+    lastClaim: Address -> Epoch,
+    outgoingRedelegations: Address -> (Epoch, Epoch) -> int,
+    transferredRewards: Dec  
   }
 
   // Validator state
@@ -113,7 +117,10 @@ module types {
     // For each destination validator, the validator keeps a map of redelegated tokens.
     // The map uses a pair of epochs as key: bond starting epoch at the validator, redelegation starting epoch (when the redelagation was issued).
     // This is used to slash destination validator when a slash for the validator is processed at the end of an epoch.
-    outgoingRedelegations: Address -> (Epoch, Epoch) -> int
+    outgoingRedelegations: Address -> (Epoch, Epoch) -> int,
+    // Rewards related state
+    commission: Epoch -> Dec,
+    rewardsProducts: Epoch -> Dec
   }
 
   // Proof-of-stake system state

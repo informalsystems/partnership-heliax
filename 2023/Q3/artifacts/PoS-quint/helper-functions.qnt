@@ -1213,4 +1213,26 @@ module helperFunctions {
         assert(subtractRedelegationsFromTotalRedelegatedBonded(srcMap, srcMap) == Map()),
       }
     }
+
+    // **************************************************************************
+    // Rewards helper functions
+    // ************************************************************************* 
+
+    pure def computeRewardProduct(commission: Dec, slashes: List[Slash]): Dec = {
+      commission
+    }
+
+    pure def computeBondRewards(start: Epoch, amount: int, lastClaim: Epoch, rewardsProducts: Epoch -> Dec): Dec = {
+      val epochProducts = rewardsProducts.keys().filter(e => e > lastClaim and e >= start)
+      epochProducts.fold((0,1), (sum, e) => val reward = (amount, 1).mul(rewardsProducts.get(e))
+                                            sum.add(reward))
+    }
+
+    pure def computeUnbondRewards(key: (Epoch, Epoch), amount: int, lastClaim: Epoch, rewardsProducts: Epoch -> Dec): Dec = {
+      val start = key._1
+      val end = key._2
+      val epochProducts = rewardsProducts.keys().filter(e => e > lastClaim and e >= start and e < end)
+      epochProducts.fold((0,1), (sum, e) => val reward = (amount, 1).mul(rewardsProducts.get(e))
+                                            sum.add(reward))
+    }
 }
