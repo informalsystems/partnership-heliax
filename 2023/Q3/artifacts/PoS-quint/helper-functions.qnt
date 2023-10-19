@@ -1218,8 +1218,8 @@ module helperFunctions {
     // Rewards helper functions
     // ************************************************************************* 
 
-    pure def computeRewardProduct(commission: Dec, slashes: List[Slash]): Dec = {
-      commission
+    pure def computeRewardProduct(slashes: List[Slash]): Dec = {
+      (1,5)
     }
 
     pure def computeBondRewards(start: Epoch, amount: int, lastClaim: Epoch, rewardsProducts: Epoch -> Dec): Dec = {

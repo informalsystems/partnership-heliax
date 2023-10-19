@@ -287,7 +287,7 @@ module namada {
     // and (iii) appending newly created slash records.
     // 4. It update PoS state by increasing the epoch, setting counterTxs to zero, transferring totalAmountSlashed from the PoS accoun tot the slash pool
     // and shifting equeued slashes.
-    pure def endOfEpoch(validatorsState: Address -> ValidatorState, posState: PosState, curEpoch: Epoch): {validatorsState: Address -> ValidatorState, posState: PosState} = {
+    pure def endOfEpoch(delegatorsState: Address -> DelegatorState, validatorsState: Address -> ValidatorState, posState: PosState, curEpoch: Epoch): {delegatorsState: Address -> DelegatorState, validatorsState: Address -> ValidatorState, posState: PosState} = {
       val finalRate = computeFinalRate((curEpoch-CUBIC_OFFSET).to(curEpoch+CUBIC_OFFSET).fold(Set(), (acc, e) => acc.union(posState.enqueuedSlashes.get(e))))
       val initMap = VALIDATORS.mapBy(v => (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 0))
       val infractionEpoch = posState.epoch - CUBIC_OFFSET - UNBONDING_OFFSET
@@ -296,6 +296,12 @@ module namada {
       val mapValidatorSlash = slashPerValidator.keys().fold(initMap, (acc, validator) => processSlash(validator, slashPerValidator.get(validator), curEpoch, acc, validatorsState, slashesMap))
       val updatedSlashesMap = VALIDATORS.mapBy(v => if (slashPerValidator.has(v)) validatorsState.get(v).slashes.append({epoch: infractionEpoch, rate: slashPerValidator.get(v)})
                                                     else validatorsState.get(v).slashes)
+      val rewards = VALIDATORS.mapBy(v => val comission = validatorsState.get(v).commission.get(curEpoch - CUBIC_OFFSET - UNBONDING_OFFSET)
+                                          val rewardProduct = computeRewardProduct(updatedSlashesMap.get(v))
+                                          val stake = validatorsState.get(v).stake.get(curEpoch - CUBIC_OFFSET - UNBONDING_OFFSET)
+                                          {fromComission: (stake,1).mul(rewardProduct).mul(comission), product: rewardProduct.mul((1,1).sub(comission))})
+      val updatedDelegators = USERS.mapBy(x => if (not(x.in(VALIDATORS))) delegatorsState.get(x)
+                                               else delegatorsState.get(x).with("rewards", delegatorsState.get(x).rewards.set(x, delegatorsState.get(x).rewards.get(x).add(rewards.get(x).fromComission))))
       val updatedValidators = VALIDATORS.mapBy(v => validatorsState.get(v).with("stake",(curEpoch-UNBONDING_OFFSET-CUBIC_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).stake.get(e) -
                                                                                                                                                                               if (e >= curEpoch+1) mapValidatorSlash.get(v).get(e) else 0
                                                                                                                                                                              else validatorsState.get(v).stake.get(e-1) - mapValidatorSlash.get(v).get(e-1))) 
@@ -306,7 +312,7 @@ module namada {
                                                                           .with("slashes", updatedSlashesMap.get(v))
                                                                           .with("commission", (curEpoch-CUBIC_OFFSET-UNBONDING_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).commission.get(e)
                                                                                                                                                                                    else (0,1))) 
-                                                                          .with("rewardsProducts", validatorsState.get(v).rewardsProducts.mapSafeSet(curEpoch - CUBIC_OFFSET - UNBONDING_OFFSET, computeRewardProduct(validatorsState.get(v).commission.get(curEpoch - CUBIC_OFFSET - UNBONDING_OFFSET), updatedSlashesMap.get(v)))))
+                                                                          .with("rewardsProducts", validatorsState.get(v).rewardsProducts.mapSafeSet(curEpoch - CUBIC_OFFSET - UNBONDING_OFFSET, rewards.get(v).product)))
       //val totalAmountSlashed = slashPerValidator.keys().fold(0, (sum, validator) => sum + validatorsState.get(validator).stake.get(infractionEpoch)*slashPerValidator.get(validator))
       val updatedPos =  posState.with("epoch", curEpoch + 1)
                                 .with("counterTxs", 0)
@@ -315,7 +321,7 @@ module namada {
                                 //.with("slashPool", posState.slashPool + totalAmountSlashed)
                                 .with("enqueuedSlashes", (curEpoch-CUBIC_OFFSET+1).to(curEpoch+1+CUBIC_OFFSET+UNBONDING_OFFSET).mapBy(e => if (e < curEpoch+1+CUBIC_OFFSET+UNBONDING_OFFSET) posState.enqueuedSlashes.get(e)
                                                                                                                                            else Set()))                                                                      
-      {validatorsState: updatedValidators, posState: updatedPos}                                                                                                                             
+      {delegatorsState: updatedDelegators, validatorsState: updatedValidators, posState: updatedPos}                                                                                                                             
     }
 
     // The function proccessEvidence is called when a validator misbehaves.
@@ -340,17 +346,18 @@ module namada {
     // 1. It first checks if it is the last transaction of the current epoch.
     // 2. If it is the last transaction of the epoch, it calls the endOfEpoch function.
     // 3. Otherwise, it updates the variables using the result of the transaciton and increases counterTxs.
-    action commonTxAfter(updateDelegators: Address -> DelegatorState, updatedValidators: Address -> ValidatorState, updatedPos: PosState): bool = all {
-      delegators' = updateDelegators,
+    action commonTxAfter(updatedDelegators: Address -> DelegatorState, updatedValidators: Address -> ValidatorState, updatedPos: PosState): bool = all {
       nextInfractionEpoch' = nextInfractionEpoch,
       if (pos.counterTxs + 1 == TXS_EPOCH) {
-        val resultEndOfEpoch = endOfEpoch(updatedValidators, updatedPos, pos.epoch)
+        val resultEndOfEpoch = endOfEpoch(updatedDelegators, updatedValidators, updatedPos, pos.epoch)
         all {
+          delegators' = resultEndOfEpoch.delegatorsState,
           validators' = resultEndOfEpoch.validatorsState,
           pos' = resultEndOfEpoch.posState,
         }
       } else {
         all {
+          delegators' = updatedDelegators,
           validators' = updatedValidators,
           pos' = updatedPos.with("counterTxs", updatedPos.counterTxs + 1),
         }
