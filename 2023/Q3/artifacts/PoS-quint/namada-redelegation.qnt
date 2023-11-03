@@ -33,11 +33,11 @@ module namada {
     // 0: no limit
     // 1: limited but it allows multiple infractions with the same stake
     // 2: disallow multiple infractions with the same stake
-    pure val limitEvidence = 0
+    pure val limitEvidence = 1
 
     // Used to guarantee every step produces a state transition
     // IMPORTANT: Set to false for tests
-    pure val enforceStateTransition = false
+    pure val enforceStateTransition = true
 
     // Last transaction executed by step.
     // Amount is over used by the actions:
@@ -231,9 +231,9 @@ module namada {
                                         .add(sumRewardsRedelegations)
                                         .add(delegator.rewards.get(validator.address))
       if (ceil(totalRewards) > 0) {
-        val updatedOutgoingRedelegations = redelegations.keys().filter(keyUnbond => keyUnbond._2 > posState.epoch-slashProcessingDelay-1)
+        val updatedOutgoingRedelegations = redelegations.keys().filter(keyUnbond => keyUnbond._2 > posState.epoch-1)
                                                                .mapBy(key => redelegations.get(key))
-        val updatedDelegator = delegator.with("lastClaim", delegator.lastClaim.set(validator.address, posState.epoch-slashProcessingDelay-1))
+        val updatedDelegator = delegator.with("lastClaim", delegator.lastClaim.set(validator.address, posState.epoch-1))
                                         //.with("balance", delegator.balance + truncate(totalRewards))
                                         .with("transferredRewards", delegator.transferredRewards.add(totalRewards))
                                         .with("rewards", delegator.rewards.set(validator.address, (0,1)))
@@ -296,9 +296,9 @@ module namada {
       val mapValidatorSlash = slashPerValidator.keys().fold(initMap, (acc, validator) => processSlash(validator, slashPerValidator.get(validator), curEpoch, acc, validatorsState, slashesMap))
       val updatedSlashesMap = VALIDATORS.mapBy(v => if (slashPerValidator.has(v)) validatorsState.get(v).slashes.append({epoch: infractionEpoch, rate: slashPerValidator.get(v)})
                                                     else validatorsState.get(v).slashes)
-      val rewards = VALIDATORS.mapBy(v => val comission = validatorsState.get(v).commission.get(curEpoch - CUBIC_OFFSET - UNBONDING_OFFSET)
+      val rewards = VALIDATORS.mapBy(v => val comission = validatorsState.get(v).commission.get(curEpoch)
                                           val rewardProduct = computeRewardProduct(updatedSlashesMap.get(v))
-                                          val stake = validatorsState.get(v).stake.get(curEpoch - CUBIC_OFFSET - UNBONDING_OFFSET)
+                                          val stake = validatorsState.get(v).stake.get(curEpoch)
                                           {fromComission: (stake,1).mul(rewardProduct).mul(comission), product: rewardProduct.mul((1,1).sub(comission))})
       val updatedDelegators = USERS.mapBy(x => if (not(x.in(VALIDATORS))) delegatorsState.get(x)
                                                else delegatorsState.get(x).with("rewards", delegatorsState.get(x).rewards.set(x, delegatorsState.get(x).rewards.get(x).add(rewards.get(x).fromComission))))
@@ -311,8 +311,8 @@ module namada {
                                                                                                                                                                                                  else Map()))                                                                                                                                                                                                                                                                                                 
                                                                           .with("slashes", updatedSlashesMap.get(v))
                                                                           .with("commission", (curEpoch-CUBIC_OFFSET-UNBONDING_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).commission.get(e)
-                                                                                                                                                                                   else (0,1))) 
-                                                                          .with("rewardsProducts", validatorsState.get(v).rewardsProducts.mapSafeSet(curEpoch - CUBIC_OFFSET - UNBONDING_OFFSET, rewards.get(v).product)))
+                                                                                                                                                                                   else validatorsState.get(v).commission.get(e-1))) 
+                                                                          .with("rewardsProducts", validatorsState.get(v).rewardsProducts.mapSafeSet(curEpoch, rewards.get(v).product)))
       //val totalAmountSlashed = slashPerValidator.keys().fold(0, (sum, validator) => sum + validatorsState.get(validator).stake.get(infractionEpoch)*slashPerValidator.get(validator))
       val updatedPos =  posState.with("epoch", curEpoch + 1)
                                 .with("counterTxs", 0)
