@@ -293,9 +293,10 @@ module namada {
     // 1. It first computes the final rate for all slashes scheduled to be processed at the end of the current epoch.
     // 2. It computes for each validator how much it should be slashed based of the slashes scheduled to be processed. It already computes 
     // how much should be substracted from each validator's stake variable at every epoch between the current epoch and the current epoch + PIPELINE_OFFSET.
-    // 3. It updates the validators' state by (i) shifting the epoched stake variable and applying any precomputed slash; (ii) shifting totalUnbonded, totalRedelegatedUnbonded and totalBonded;
+    // 3. It computes rewards.
+    // 4. It updates the validators' state by (i) shifting the epoched stake variable and applying any precomputed slash; (ii) shifting totalUnbonded, totalRedelegatedUnbonded and totalBonded;
     // and (iii) appending newly created slash records.
-    // 4. It update PoS state by increasing the epoch, setting counterTxs to zero, transferring totalAmountSlashed from the PoS accoun tot the slash pool
+    // 5. It update PoS state by increasing the epoch, setting counterTxs to zero, transferring totalAmountSlashed from the PoS accoun tot the slash pool
     // and shifting equeued slashes.
     pure def endOfEpoch(delegatorsState: Address -> DelegatorState, validatorsState: Address -> ValidatorState, posState: PosState, curEpoch: Epoch): {delegatorsState: Address -> DelegatorState, validatorsState: Address -> ValidatorState, posState: PosState} = {
       val finalRate = computeFinalRate((curEpoch-CUBIC_OFFSET).to(curEpoch+CUBIC_OFFSET).fold(Set(), (acc, e) => acc.union(posState.enqueuedSlashes.get(e))))

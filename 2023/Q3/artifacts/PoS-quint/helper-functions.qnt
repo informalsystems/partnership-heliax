@@ -1228,11 +1228,45 @@ module helperFunctions {
                                             sum.add(reward))
     }
 
+    run computeBondRewardsTest = {
+      val rewardsProducts = Map(1 -> (1, 5), 2 -> (1, 5), 3 -> (1, 4), 4 -> (1, 4))
+      all {
+        // bond started too late
+        assert(computeBondRewards(5, 20, 2, rewardsProducts).equal((0,1))),
+        // bond started in the middle, nothing claimed
+        assert(computeBondRewards(2, 20, 1, rewardsProducts).equal((14,1))),
+        // bond started in the middle, partially claimed
+        assert(computeBondRewards(2, 20, 2, rewardsProducts).equal((10,1))),
+        // bond started in the middle, all claimed
+        assert(computeBondRewards(2, 20, 4, rewardsProducts).equal((0,1))),
+      }
+    }
+
     pure def computeUnbondRewards(key: (Epoch, Epoch), amount: int, lastClaim: Epoch, rewardsProducts: Epoch -> Dec): Dec = {
       val start = key._1
       val end = key._2
       val epochProducts = rewardsProducts.keys().filter(e => e > lastClaim and e >= start and e < end)
       epochProducts.fold((0,1), (sum, e) => val reward = (amount, 1).mul(rewardsProducts.get(e))
                                             sum.add(reward))
+    }
+
+    run computeUnbondRewardsTest = {
+      val rewardsProducts = Map(1 -> (1, 5), 2 -> (1, 5), 3 -> (1, 4), 4 -> (1, 4))
+      all {
+        // bond started too late
+        assert(computeUnbondRewards((5, 10), 20, 2, rewardsProducts).equal((0,1))),
+        // bond started in the middle and spans all epochs, nothing claimed
+        assert(computeUnbondRewards((2, 5), 20, 1, rewardsProducts).equal((14,1))),
+        // bond started in the middle and spans all epochs, partially claimed
+        assert(computeUnbondRewards((2, 5), 20, 2, rewardsProducts).equal((10,1))),
+        // bond started in the middle and spans all epochs, all claimed
+        assert(computeUnbondRewards((2, 5), 20, 4, rewardsProducts).equal((0,1))),
+        // bond started in the middle and ended early, nothing claimed
+        assert(computeUnbondRewards((2, 4), 20, 1, rewardsProducts).equal((9,1))),
+        // bond started in the middle and ended early, partially claimed
+        assert(computeUnbondRewards((2, 4), 20, 2, rewardsProducts).equal((5,1))),
+        // bond started in the middle and ended early, all claimed
+        assert(computeUnbondRewards((2, 4), 20, 4, rewardsProducts).equal((0,1))),
+      }
     }
 }
