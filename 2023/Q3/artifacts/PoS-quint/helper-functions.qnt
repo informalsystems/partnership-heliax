@@ -1222,6 +1222,12 @@ module helperFunctions {
       (1,5)
     }
 
+    // The function computeBondRewards computes the rewards produced by a bond that have not been claimed.
+    // - @param start bond start epoch.
+    // - @param amount bond amount.
+    // - @param lastClaim epoch up to which the rewards have been already claimed.
+    // - @param rewardsProducts applicable rewards products.
+    // - @returns the total amount of rewards.
     pure def computeBondRewards(start: Epoch, amount: int, lastClaim: Epoch, rewardsProducts: Epoch -> Dec): Dec = {
       val epochProducts = rewardsProducts.keys().filter(e => e > lastClaim and e >= start)
       epochProducts.fold((0,1), (sum, e) => val reward = (amount, 1).mul(rewardsProducts.get(e))
@@ -1242,6 +1248,12 @@ module helperFunctions {
       }
     }
 
+    // The function computeUnbondRewards computes the rewards produced by an unbonded bond that have not been claimed.
+    // - @param key a pair of epochs: start and end bond epochs.
+    // - @param amount bond amount.
+    // - @param lastClaim epoch up to which the rewards have been already claimed.
+    // - @param rewardsProducts applicable rewards products.
+    // - @returns the total amount of rewards.
     pure def computeUnbondRewards(key: (Epoch, Epoch), amount: int, lastClaim: Epoch, rewardsProducts: Epoch -> Dec): Dec = {
       val start = key._1
       val end = key._2
