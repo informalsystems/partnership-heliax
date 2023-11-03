@@ -1218,6 +1218,7 @@ module helperFunctions {
     // Rewards helper functions
     // ************************************************************************* 
 
+    // The function computeRewardProduct blackboxes the computation of reward products based on a list of slashes.
     pure def computeRewardProduct(slashes: List[Slash]): Dec = {
       (1,5)
     }
