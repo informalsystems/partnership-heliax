@@ -221,7 +221,7 @@ module namada {
     // 1. The function first computes the total amount of rewards by multiplying the validator's rewardsProducts to the
     //    delegators current bonds, unbonds, and outgoing redelegations.
     // 2. It adds any rewards already computed at withdrawal (or those coming from commissions for validators) .
-    // 3. If there are rewards to claim, the tokens are moved to the delegator's transferredRewards, and lastClaim, rewards and outgoingRedelegations
+    // 3. If there are rewards to claim, the tokens are moved to the delegator's balanceRewards, and lastClaim, rewards and outgoingRedelegations
     //    are updated accordingly. lastClaim is key to guarantee that rewards for a given bond and epoch are claimed at most once.
     // 4. Note that the rewards should be moved to the delegators account. We do not do that in the Quint spec because balance is an integer and rewards
     //    are decimals. Maybe in the future when Quint supports fractions vatively, we will refactor the spec. The implementation should move the rewards
@@ -245,7 +245,7 @@ module namada {
                                                                .mapBy(key => redelegations.get(key))
         val updatedDelegator = delegator.with("lastClaim", delegator.lastClaim.set(validator.address, posState.epoch-1))
                                         //.with("balance", delegator.balance + truncate(totalRewards))
-                                        .with("transferredRewards", delegator.transferredRewards.add(totalRewards))
+                                        .with("balanceRewards", delegator.balanceRewards.add(totalRewards))
                                         .with("rewards", delegator.rewards.set(validator.address, (0,1)))
                                         .with("outgoingRedelegations", delegator.outgoingRedelegations.set(validator.address, updatedOutgoingRedelegations))
         {success: true, delegator: updatedDelegator, validator: validator, posState: posState}
@@ -553,7 +553,7 @@ module namada {
                                            rewards: VALIDATORS.mapBy(x => (0,1)),
                                            lastClaim: VALIDATORS.mapBy(x => initEpoch - 1),
                                            outgoingRedelegations: VALIDATORS.mapBy(x => Map()),
-                                           transferredRewards: (0,1)}),
+                                           balanceRewards: (0,1)}),
         validators' = VALIDATORS.mapBy(validator => {address: validator,
                                                      stake: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => 0),
                                                      totalUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
@@ -620,7 +620,7 @@ module namada {
                             rewards: VALIDATORS.mapBy(x => (0,1)),
                             lastClaim: VALIDATORS.mapBy(x => 0),
                             outgoingRedelegations: VALIDATORS.mapBy(x => Map()),
-                            transferredRewards: (0,1)}
+                            balanceRewards: (0,1)}
       val validatorState = {address: "alice",
                             stake: 0.to(UNBONDING_OFFSET).mapBy(e => 0),
                             totalUnbonded: 1.to(1+PIPELINE_OFFSET).mapBy(e => Map()),
@@ -755,7 +755,7 @@ module namada {
                                            rewards: VALIDATORS.mapBy(x => (0,1)),
                                            lastClaim: VALIDATORS.mapBy(x => initEpoch - 1),
                                            outgoingRedelegations: VALIDATORS.mapBy(x => Map()),
-                                           transferredRewards: (0,1)}),
+                                           balanceRewards: (0,1)}),
         validators' = VALIDATORS.mapBy(validator => {address: validator,
                                                      stake: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => if (validator=="alice" and e >= UNBONDING_OFFSET + CUBIC_OFFSET - 1) 200000 else 0),
                                                      totalUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
