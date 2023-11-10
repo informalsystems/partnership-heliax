@@ -77,8 +77,6 @@ module types {
     rewards: Address -> Dec,
     // The last epoch at which the user has claimed its rewards for each validator.
     lastClaim: Address -> Epoch,
-    // User's outgoing redelegations. This is used for computing rewards: when unbonding due to redelegation, we do not record unbonds at the delegator.
-    outgoingRedelegations: Address -> (Epoch, Epoch) -> int,
     // User's rewards balance. The implementation should not need this state variable as rewards should be transferred to the delegator's balance.
     balanceRewards: Dec  
   }

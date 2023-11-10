@@ -1226,6 +1226,9 @@ module helperFunctions {
     // The function computeBondRewards computes the rewards produced by a bond that have not been claimed.
     // - @param start bond start epoch.
     // - @param amount bond amount.
+    // - @param redelegatedBond a RedelegatedBondsMap associated with the bond (which may be empty (Map())).
+    // - @param validator the validator address to which the tokens are delegated.
+    // - @param slashes a map from validator to list of slashes
     // - @param lastClaim epoch up to which the rewards have been already claimed.
     // - @param rewardsProducts applicable rewards products.
     // - @returns the total amount of rewards.
@@ -1236,20 +1239,29 @@ module helperFunctions {
                                             sum.add(reward))
     }
 
-    /*run computeBondRewardsTest = {
+    run computeBondRewardsTest = {
       val rewardsProducts = Map(1 -> (1, 5), 2 -> (1, 5), 3 -> (1, 4), 4 -> (1, 4))
+      val emptySlashes = Map("alice" -> [], "bob" -> [])
       all {
+        // tests  without slashes or redelegation bond
         // bond started too late
-        assert(computeBondRewards(5, 20, 2, rewardsProducts).equal((0,1))),
+        assert(computeBondRewards(5, 20, Map(), "alice", emptySlashes, 2, rewardsProducts).equal((0,1))),
         // bond started in the middle, nothing claimed
-        assert(computeBondRewards(2, 20, 1, rewardsProducts).equal((14,1))),
+        assert(computeBondRewards(2, 20, Map(), "alice", emptySlashes,1, rewardsProducts).equal((14,1))),
         // bond started in the middle, partially claimed
-        assert(computeBondRewards(2, 20, 2, rewardsProducts).equal((10,1))),
+        assert(computeBondRewards(2, 20, Map(), "alice", emptySlashes,2, rewardsProducts).equal((10,1))),
         // bond started in the middle, all claimed
-        assert(computeBondRewards(2, 20, 4, rewardsProducts).equal((0,1))),
+        assert(computeBondRewards(2, 20, Map(), "alice", emptySlashes,4, rewardsProducts).equal((0,1))),
+        // bond started in the middle, all claimed
+        assert(computeBondRewards(2, 20, Map(), "alice", emptySlashes,4, rewardsProducts).equal((0,1))),
       }
-    }*/
+    }
 
+    // Given a validator and a delegator, the function computeAllRewards computes the total amount of rewards that have not yet been claimed.
+    // - @param delegator delegator's state
+    // - @param validator validator's state.
+    // - @param slashes a map from validator to list of slashes.
+    // - @returns the total amount of rewards.
     pure def computeAllRewards(delegator: DelegatorState, validator: ValidatorState, slashes: Address -> List[Slash]): Dec = {
       val bonds = delegator.bonded.get(validator.address)
       val lastClaim = delegator.lastClaim.get(validator.address)
@@ -1259,6 +1271,11 @@ module helperFunctions {
       sumRewardsBonds.add(delegator.rewards.get(validator.address))
     }
 
+    // The function computeEpochInflation computes total amount of minted tokens at a given epoch based on the stake of each validator
+    // and the function computeRewardProduct.
+    // - @param validatorsState a map from validator address to validator state.
+    // - @param epoch an epoch.
+    // - @returns the total amount of minted tokens.
     pure def computeEpochInflation(validatorsState: Address -> ValidatorState, epoch: Epoch): Dec = {
       validatorsState.keys().fold((0,1), (sum, v) => val stake = validatorsState.get(v).stake.get(epoch)
                                                      val rewards = (stake, 1).mul(computeRewardProduct(List()))
