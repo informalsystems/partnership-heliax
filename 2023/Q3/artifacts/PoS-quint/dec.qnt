@@ -35,6 +35,9 @@ module Dec {
 
     pure def equal(a: Dec, b: Dec): bool =
         (a.sub(b))._1 == 0
+    
+    pure def le(a: Dec, b: Dec): bool =
+        (a.sub(b))._1 <= 0
 
     pure def truncate(a: Dec): int =
         a._1 / a._2

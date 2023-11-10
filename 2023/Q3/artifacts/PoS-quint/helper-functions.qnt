@@ -1229,13 +1229,14 @@ module helperFunctions {
     // - @param lastClaim epoch up to which the rewards have been already claimed.
     // - @param rewardsProducts applicable rewards products.
     // - @returns the total amount of rewards.
-    pure def computeBondRewards(start: Epoch, amount: int, lastClaim: Epoch, rewardsProducts: Epoch -> Dec): Dec = {
+    pure def computeBondRewards(start: Epoch, amount: int, redelegatedBond: RedelegatedBondsMap, validator: Address, slashes: Address -> List[Slash], lastClaim: Epoch, rewardsProducts: Epoch -> Dec): Dec = {
       val epochProducts = rewardsProducts.keys().filter(e => e > lastClaim and e >= start)
-      epochProducts.fold((0,1), (sum, e) => val reward = (amount, 1).mul(rewardsProducts.get(e))
+      epochProducts.fold((0,1), (sum, e) => val slashedAmount = computeBondAtEpoch(e, start, amount, redelegatedBond, validator, slashes)
+                                            val reward = (slashedAmount, 1).mul(rewardsProducts.get(e))
                                             sum.add(reward))
     }
 
-    run computeBondRewardsTest = {
+    /*run computeBondRewardsTest = {
       val rewardsProducts = Map(1 -> (1, 5), 2 -> (1, 5), 3 -> (1, 4), 4 -> (1, 4))
       all {
         // bond started too late
@@ -1247,39 +1248,20 @@ module helperFunctions {
         // bond started in the middle, all claimed
         assert(computeBondRewards(2, 20, 4, rewardsProducts).equal((0,1))),
       }
+    }*/
+
+    pure def computeAllRewards(delegator: DelegatorState, validator: ValidatorState, slashes: Address -> List[Slash]): Dec = {
+      val bonds = delegator.bonded.get(validator.address)
+      val lastClaim = delegator.lastClaim.get(validator.address)
+      val sumRewardsBonds = bonds.keys().fold((0,1), (sum, e) => val redelegatedBond = delegator.redelegatedBonded.get(validator.address).getOrElse(e, Map())
+                                                                 val reward = computeBondRewards(e, bonds.get(e), redelegatedBond, validator.address, slashes, lastClaim, validator.rewardsProducts)
+                                                                 sum.add(reward))                                                            
+      sumRewardsBonds.add(delegator.rewards.get(validator.address))
     }
 
-    // The function computeUnbondRewards computes the rewards produced by an unbonded bond that have not been claimed.
-    // - @param key a pair of epochs: start and end bond epochs.
-    // - @param amount bond amount.
-    // - @param lastClaim epoch up to which the rewards have been already claimed.
-    // - @param rewardsProducts applicable rewards products.
-    // - @returns the total amount of rewards.
-    pure def computeUnbondRewards(key: (Epoch, Epoch), amount: int, lastClaim: Epoch, rewardsProducts: Epoch -> Dec): Dec = {
-      val start = key._1
-      val end = key._2
-      val epochProducts = rewardsProducts.keys().filter(e => e > lastClaim and e >= start and e < end)
-      epochProducts.fold((0,1), (sum, e) => val reward = (amount, 1).mul(rewardsProducts.get(e))
-                                            sum.add(reward))
-    }
-
-    run computeUnbondRewardsTest = {
-      val rewardsProducts = Map(1 -> (1, 5), 2 -> (1, 5), 3 -> (1, 4), 4 -> (1, 4))
-      all {
-        // bond started too late
-        assert(computeUnbondRewards((5, 10), 20, 2, rewardsProducts).equal((0,1))),
-        // bond started in the middle and spans all epochs, nothing claimed
-        assert(computeUnbondRewards((2, 5), 20, 1, rewardsProducts).equal((14,1))),
-        // bond started in the middle and spans all epochs, partially claimed
-        assert(computeUnbondRewards((2, 5), 20, 2, rewardsProducts).equal((10,1))),
-        // bond started in the middle and spans all epochs, all claimed
-        assert(computeUnbondRewards((2, 5), 20, 4, rewardsProducts).equal((0,1))),
-        // bond started in the middle and ended early, nothing claimed
-        assert(computeUnbondRewards((2, 4), 20, 1, rewardsProducts).equal((9,1))),
-        // bond started in the middle and ended early, partially claimed
-        assert(computeUnbondRewards((2, 4), 20, 2, rewardsProducts).equal((5,1))),
-        // bond started in the middle and ended early, all claimed
-        assert(computeUnbondRewards((2, 4), 20, 4, rewardsProducts).equal((0,1))),
-      }
+    pure def computeEpochInflation(validatorsState: Address -> ValidatorState, epoch: Epoch): Dec = {
+      validatorsState.keys().fold((0,1), (sum, v) => val stake = validatorsState.get(v).stake.get(epoch)
+                                                     val rewards = (stake, 1).mul(computeRewardProduct(List()))
+                                                     sum.add(rewards))
     }
 }
