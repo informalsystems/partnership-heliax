@@ -36,7 +36,7 @@ The artifacts and its current state is summarized in the following artifacts tab
 | 4 | [Pseudocode model with redelegation](https://github.com/informalsystems/partnership-heliax/blob/manuel/redelegation-q1/2023/Q1/artifacts/PoS-pseudocode/PoS-model-redelegation.md) | Ongoing | manuel/redelegation-q1 | Pending: (i) integrate the latest slashing with redelegation, which consists of integrating the cubic offset and preventing validators' stakes to become negative; and (ii) fix the issues found while modeling redelegation in Quint |
 | 5 | [Quint specification without redelegation](https://github.com/informalsystems/partnership-heliax/blob/trunk/2023/Q2/artifacts/PoS-quint/namada.qnt) | Finalized Q2 2024 | N/A |  |
 | 6 | [Quint specification with redelegation](https://github.com/informalsystems/partnership-heliax/tree/trunk/2023/Q3/artifacts/PoS-quint) | Finalized Q3 2023 | N/A | |
-| 7 | [Quint specification with redelegation and rewards](https://github.com/informalsystems/partnership-heliax/tree/trunk/2023/Q3/artifacts/PoS-quint) | Ongoing | manuel/test-rewards | |
+| 7 | [Full Quint specification](https://github.com/informalsystems/partnership-heliax/tree/trunk/2023/Q4/artifacts/PoS-quint) | Finalized Q4 2023 | n/A | |
 
 ### To clone just the artifacts Informal created during the audit
 
