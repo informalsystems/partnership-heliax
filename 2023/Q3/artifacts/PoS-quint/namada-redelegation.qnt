@@ -530,7 +530,7 @@ module namada {
                                        totalAmountTokensConstant and
                                        stakeGreaterZero and
                                        boundedBalance and
-                                       // the following two only make sense in the context of redelegations
+                                       // the following two only make sense in the context of redelegations and rewards
                                        stakeEqualSumSlashedBonds and
                                        bondsGreaterRedelegations and
                                        transferredRewardsLessOrEqualInflation and
