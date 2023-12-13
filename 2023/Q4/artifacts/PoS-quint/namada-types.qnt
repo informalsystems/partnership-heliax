@@ -71,7 +71,14 @@ module types {
     unbonded: Address -> (Epoch, Epoch) -> int,
     // User's unbonds that come from redelegations: a map from validator to a map storing the redelegtated tokens that the user has unbonded (not yet withdrawn)/
     // The latter maps the pair bond starting epoch and unbond ending epoch to a RedelegatedBondsMap (from source validator to a map of bonds from bond starting epoch at the source validator to amount of tokens)
-    redelegatedUnbonded: Address -> (Epoch, Epoch) -> RedelegatedBondsMap
+    redelegatedUnbonded: Address -> (Epoch, Epoch) -> RedelegatedBondsMap,
+    // User's precomputed rewards coming from delegation that have not yet been claimed. If the user is a valiadtor, it also includes rewards coming from commissions.
+    // It is a map from validator address to decimal.
+    rewards: Address -> Dec,
+    // The last epoch at which the user has claimed its rewards for each validator.
+    lastClaim: Address -> Epoch,
+    // User's rewards balance. The implementation should not need this state variable as rewards should be transferred to the delegator's balance.
+    balanceRewards: Dec  
   }
 
   // Validator state
@@ -113,7 +120,11 @@ module types {
     // For each destination validator, the validator keeps a map of redelegated tokens.
     // The map uses a pair of epochs as key: bond starting epoch at the validator, redelegation starting epoch (when the redelagation was issued).
     // This is used to slash destination validator when a slash for the validator is processed at the end of an epoch.
-    outgoingRedelegations: Address -> (Epoch, Epoch) -> int
+    outgoingRedelegations: Address -> (Epoch, Epoch) -> int,
+    // Epoched commission rate.
+    commission: Epoch -> Dec,
+    // Computed rewards products indexed by epoch.
+    rewardsProducts: Epoch -> Dec
   }
 
   // Proof-of-stake system state

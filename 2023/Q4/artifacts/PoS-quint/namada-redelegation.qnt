@@ -49,6 +49,8 @@ module namada {
     // Keeps tracks of when a validator may misbehave again in the case when limitEvidence == 1
     var nextInfractionEpoch: Address -> int
 
+    var totalInflation: Dec
+
     // **************************************************************************
     // Main functions
     // ************************************************************************* 
@@ -113,11 +115,18 @@ module namada {
         val newRedelegatedUnbonds = computeNewRedelegatedUnbonds(redelegatedBonds, resultUnbonding.toRemove, modifiedRedelegation)
         val updatedRedelegatedUnbonded = if (isRedelegation) delegator.redelegatedUnbonded.get(validator.address)
                                          else updateRedelegatedUnbonded(delegator.redelegatedUnbonded.get(validator.address), newRedelegatedUnbonds, endEpoch)
+        // Compute rewards produced by the unbonded tokens
+        val lastClaim = delegator.lastClaim.get(validator.address)
+        val sumRewardsBonds = newUnbonds.keys().fold((0,1), (sum, key) => val start = key._1
+                                                                          val redelegatedBond = delegator.redelegatedBonded.get(validator.address).getOrElse(start, Map())
+                                                                          val reward = computeBondRewards(start, newUnbonds.get(key), redelegatedBond, validator.address, allValidators.keys().mapBy(v => allValidators.get(v).slashes), lastClaim, validator.rewardsProducts)
+                                                                          sum.add(reward))
         // Compute the updated delegator's state
         val updatedDelegator = delegator.with("bonded", delegator.bonded.set(validator.address, updatedBonded))
                                         .with("redelegatedBonded", delegator.redelegatedBonded.set(validator.address, updatedRedelegatedBonded))
                                         .with("unbonded", delegator.unbonded.set(validator.address, updatedUnbonded))
                                         .with("redelegatedUnbonded", delegator.redelegatedUnbonded.set(validator.address, updatedRedelegatedUnbonded))
+                                        .with("rewards", delegator.rewards.set(validator.address, delegator.rewards.get(validator.address).add(sumRewardsBonds)))
         // Compute the updated validator's totalBonded variable
         val updatedTotalBonded = val bondToSubtract = keysUnbonds.mapBy(start => newUnbonds.get((start, endEpoch)))
                                  subtractBondsFromTotalBonded(validator.totalBonded, bondToSubtract)
@@ -193,9 +202,9 @@ module namada {
                                       val updatedMap = mergeBondsMap(existing, resultUnbond.resultSlashing.epochMap)
                                       newDelegatorState.redelegatedBonded.get(destAddress).mapSafeSet(posState.epoch + PIPELINE_OFFSET,
                                                                                                       newDelegatorState.redelegatedBonded.get(destAddress).getOrElse(posState.epoch + PIPELINE_OFFSET, Map()).mapSafeSet(srcAddress, updatedMap))
-        val updatedDelegator = resultUnbond.result.delegator.with("bonded", newDelegatorState.bonded.set(destValidator.address,
-                                                                                                         newDelegatorState.bonded.get(destValidator.address).addBond(posState.epoch + PIPELINE_OFFSET, amountAfterSlashing))) 
-                                                            .with("redelegatedBonded",  newDelegatorState.redelegatedBonded.set(destValidator.address, updatedRedelegatedBonds))
+        val updatedDelegator = newDelegatorState.with("bonded", newDelegatorState.bonded.set(destValidator.address,
+                                                                                             newDelegatorState.bonded.get(destValidator.address).addBond(posState.epoch + PIPELINE_OFFSET, amountAfterSlashing))) 
+                                                .with("redelegatedBonded", newDelegatorState.redelegatedBonded.set(destValidator.address, updatedRedelegatedBonds))
         val updatedOutgoingRedelegations = mergeOutgoingRedelegations(newSrcValidatorState.outgoingRedelegations.get(destAddress), resultUnbond.resultSlashing.epochMap, posState.epoch)
         val updatedSrcValidator = newSrcValidatorState.with("outgoingRedelegations", newSrcValidatorState.outgoingRedelegations.set(destAddress, updatedOutgoingRedelegations))
         val updatedDestValidator = destValidator.with("stake", destValidator.stake.set(posState.epoch + PIPELINE_OFFSET,
@@ -207,6 +216,28 @@ module namada {
         {success: true, delegator: updatedDelegator, srcValidator: updatedSrcValidator, destValidator: updatedDestValidator, posState: posState}
       } else {
         {success: false, delegator: delegator, srcValidator: srcValidator, destValidator: destValidator, posState: posState}
+      }
+    }
+
+    // The function claim is called when a user wants to claim its rewards generated by delegating to a given a validator .
+    // 1. The function first computes the total amount of rewards by multiplying the validator's rewardsProducts to the
+    //    delegators current bonds.
+    // 2. It adds any rewards already computed at unbonding (and those coming from commissions for validators) .
+    // 3. If there are rewards to claim, the tokens are moved to the delegator's balanceRewards, and lastClaima and rewards
+    //    are updated accordingly. lastClaim is key to guarantee that rewards for a given bond and epoch are claimed at most once.
+    // 4. Note that the rewards should be moved to the delegators account. We do not do that in the Quint spec because balance is an integer and rewards
+    //    are decimals. Maybe in the future when Quint supports fractions vatively, we will refactor the spec. The implementation should move the rewards
+    //    to the delegator's account.
+    pure def claim(delegator: DelegatorState, validator: ValidatorState, slashes: Address -> List[Slash], posState: PosState): ResultTx = {
+      val totalRewards = computeAllRewards(delegator, validator, slashes)
+      if (ceil(totalRewards) > 0) {
+        val updatedDelegator = delegator.with("lastClaim", delegator.lastClaim.set(validator.address, posState.epoch-1))
+                                        //.with("balance", delegator.balance + truncate(totalRewards))
+                                        .with("balanceRewards", delegator.balanceRewards.add(totalRewards))
+                                        .with("rewards", delegator.rewards.set(validator.address, (0,1)))
+        {success: true, delegator: updatedDelegator, validator: validator, posState: posState}
+      } else {
+        {success: false, delegator: delegator, validator: validator, posState: posState}
       }
     }
     
@@ -249,17 +280,26 @@ module namada {
     // 1. It first computes the final rate for all slashes scheduled to be processed at the end of the current epoch.
     // 2. It computes for each validator how much it should be slashed based of the slashes scheduled to be processed. It already computes 
     // how much should be substracted from each validator's stake variable at every epoch between the current epoch and the current epoch + PIPELINE_OFFSET.
-    // 3. It updates the validators' state by (i) shifting the epoched stake variable and applying any precomputed slash; (ii) shifting totalUnbonded, totalRedelegatedUnbonded and totalBonded;
+    // 3. It computes rewards.
+    // 4. It updates the validators' state by (i) shifting the epoched stake variable and applying any precomputed slash; (ii) shifting totalUnbonded, totalRedelegatedUnbonded and totalBonded;
     // and (iii) appending newly created slash records.
-    // 4. It update PoS state by increasing the epoch, setting counterTxs to zero, transferring totalAmountSlashed from the PoS accoun tot the slash pool
+    // 5. It update PoS state by increasing the epoch, setting counterTxs to zero, transferring totalAmountSlashed from the PoS accoun tot the slash pool
     // and shifting equeued slashes.
-    pure def endOfEpoch(validatorsState: Address -> ValidatorState, posState: PosState, curEpoch: Epoch): {validatorsState: Address -> ValidatorState, posState: PosState} = {
+    pure def endOfEpoch(delegatorsState: Address -> DelegatorState, validatorsState: Address -> ValidatorState, posState: PosState, curEpoch: Epoch): {delegatorsState: Address -> DelegatorState, validatorsState: Address -> ValidatorState, posState: PosState} = {
       val finalRate = computeFinalRate((curEpoch-CUBIC_OFFSET).to(curEpoch+CUBIC_OFFSET).fold(Set(), (acc, e) => acc.union(posState.enqueuedSlashes.get(e))))
       val initMap = VALIDATORS.mapBy(v => (curEpoch+1).to(curEpoch+PIPELINE_OFFSET).mapBy(e => 0))
       val infractionEpoch = posState.epoch - CUBIC_OFFSET - UNBONDING_OFFSET
       val slashPerValidator = posState.enqueuedSlashes.get(curEpoch).fold(Map(), (acc, slash) => acc.mapSafeSet(slash.validator, min(1, acc.getOrElse(slash.validator, 0) + finalRate)))
       val slashesMap = VALIDATORS.mapBy(v => validatorsState.get(v).slashes)
       val mapValidatorSlash = slashPerValidator.keys().fold(initMap, (acc, validator) => processSlash(validator, slashPerValidator.get(validator), curEpoch, acc, validatorsState, slashesMap))
+      val updatedSlashesMap = VALIDATORS.mapBy(v => if (slashPerValidator.has(v)) validatorsState.get(v).slashes.append({epoch: infractionEpoch, rate: slashPerValidator.get(v)})
+                                                    else validatorsState.get(v).slashes)
+      val rewards = VALIDATORS.mapBy(v => val commission = validatorsState.get(v).commission.get(curEpoch)
+                                          val rewardProduct = computeRewardProduct(updatedSlashesMap.get(v))
+                                          val stake = validatorsState.get(v).stake.get(curEpoch)
+                                          {fromCommission: (stake,1).mul(rewardProduct).mul(commission), product: rewardProduct.mul((1,1).sub(commission))})
+      val updatedDelegators = USERS.mapBy(x => if (not(x.in(VALIDATORS))) delegatorsState.get(x)
+                                               else delegatorsState.get(x).with("rewards", delegatorsState.get(x).rewards.set(x, delegatorsState.get(x).rewards.get(x).add(rewards.get(x).fromCommission))))
       val updatedValidators = VALIDATORS.mapBy(v => validatorsState.get(v).with("stake",(curEpoch-UNBONDING_OFFSET-CUBIC_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).stake.get(e) -
                                                                                                                                                                               if (e >= curEpoch+1) mapValidatorSlash.get(v).get(e) else 0
                                                                                                                                                                              else validatorsState.get(v).stake.get(e-1) - mapValidatorSlash.get(v).get(e-1))) 
@@ -267,8 +307,10 @@ module namada {
                                                                                                                                                                                       else Map()))
                                                                           .with("totalRedelegatedUnbonded", (curEpoch-CUBIC_OFFSET-UNBONDING_OFFSET+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).totalRedelegatedUnbonded.get(e)
                                                                                                                                                                                                  else Map()))                                                                                                                                                                                                                                                                                                 
-                                                                          .with("slashes", if (slashPerValidator.has(v)) validatorsState.get(v).slashes.append({epoch: infractionEpoch, rate: slashPerValidator.get(v)})
-                                                                                           else validatorsState.get(v).slashes))
+                                                                          .with("slashes", updatedSlashesMap.get(v))
+                                                                          .with("commission", (curEpoch+1).to(curEpoch+1+PIPELINE_OFFSET).mapBy(e => if (e < curEpoch+1+PIPELINE_OFFSET) validatorsState.get(v).commission.get(e)
+                                                                                                                                                     else validatorsState.get(v).commission.get(e-1))) 
+                                                                          .with("rewardsProducts", validatorsState.get(v).rewardsProducts.mapSafeSet(curEpoch, rewards.get(v).product)))
       //val totalAmountSlashed = slashPerValidator.keys().fold(0, (sum, validator) => sum + validatorsState.get(validator).stake.get(infractionEpoch)*slashPerValidator.get(validator))
       val updatedPos =  posState.with("epoch", curEpoch + 1)
                                 .with("counterTxs", 0)
@@ -277,7 +319,7 @@ module namada {
                                 //.with("slashPool", posState.slashPool + totalAmountSlashed)
                                 .with("enqueuedSlashes", (curEpoch-CUBIC_OFFSET+1).to(curEpoch+1+CUBIC_OFFSET+UNBONDING_OFFSET).mapBy(e => if (e < curEpoch+1+CUBIC_OFFSET+UNBONDING_OFFSET) posState.enqueuedSlashes.get(e)
                                                                                                                                            else Set()))                                                                      
-      {validatorsState: updatedValidators, posState: updatedPos}                                                                                                                             
+      {delegatorsState: updatedDelegators, validatorsState: updatedValidators, posState: updatedPos}                                                                                                                             
     }
 
     // The function proccessEvidence is called when a validator misbehaves.
@@ -302,19 +344,22 @@ module namada {
     // 1. It first checks if it is the last transaction of the current epoch.
     // 2. If it is the last transaction of the epoch, it calls the endOfEpoch function.
     // 3. Otherwise, it updates the variables using the result of the transaciton and increases counterTxs.
-    action commonTxAfter(updateDelegators: Address -> DelegatorState, updatedValidators: Address -> ValidatorState, updatedPos: PosState): bool = all {
-      delegators' = updateDelegators,
+    action commonTxAfter(updatedDelegators: Address -> DelegatorState, updatedValidators: Address -> ValidatorState, updatedPos: PosState): bool = all {
       nextInfractionEpoch' = nextInfractionEpoch,
       if (pos.counterTxs + 1 == TXS_EPOCH) {
-        val resultEndOfEpoch = endOfEpoch(updatedValidators, updatedPos, pos.epoch)
+        val resultEndOfEpoch = endOfEpoch(updatedDelegators, updatedValidators, updatedPos, pos.epoch)
         all {
+          delegators' = resultEndOfEpoch.delegatorsState,
           validators' = resultEndOfEpoch.validatorsState,
           pos' = resultEndOfEpoch.posState,
+          totalInflation' = totalInflation.add(computeEpochInflation(updatedValidators, updatedPos.epoch))
         }
       } else {
         all {
+          delegators' = updatedDelegators,
           validators' = updatedValidators,
           pos' = updatedPos.with("counterTxs", updatedPos.counterTxs + 1),
+          totalInflation' = totalInflation,
         }
       }
     }
@@ -352,6 +397,18 @@ module namada {
       }
     }
 
+    action actionClaim(user: Address, validator: Address): bool = all {
+      val slashes = validators.keys().mapBy(v => validators.get(v).slashes)
+      val result = claim(delegators.get(user), validators.get(validator), slashes, pos)
+      all {
+        require(enforceStateTransition implies result.success),
+        commonTxAfter(delegators.set(user, result.delegator),
+                      validators.set(validator, result.validator),
+                      result.posState),
+        lastTx' = {tag: "Claim", result: result.success, user: user, validator: validator, amount: 0}
+      }
+    }
+
     action actionRedelegate(user: Address, srcValidator: Address, destValidator: Address, amount: int): bool = all {
       val result = redelegate(delegators.get(user), validators, srcValidator, destValidator, pos, amount)
       all {
@@ -372,7 +429,8 @@ module namada {
         pos' = result.posState,
         delegators' = delegators,
         lastTx' = {tag: "Evidence", result: true, user: "", validator: validator, amount: e},
-        nextInfractionEpoch' = nextInfractionEpoch.set(validator, e + UNBONDING_OFFSET)
+        nextInfractionEpoch' = nextInfractionEpoch.set(validator, e + UNBONDING_OFFSET),
+        totalInflation' = totalInflation
       }
     }
 
@@ -426,7 +484,20 @@ module namada {
                                                                                                 sum + bonds.keys().fold(0, (total, start) => val redelegatedBond = delegators.get(user).redelegatedBonded.get(validator).getOrElse(start, Map())
                                                                                                                                              val afterSlashes = computeBondAtEpoch(pos.epoch + PIPELINE_OFFSET, start, bonds.get(start), redelegatedBond, validator, slashes)
                                                                                                                                              total + afterSlashes)) == validators.get(validator).stake.get(pos.epoch + PIPELINE_OFFSET))
+    // Invariant 10: The sum of rewards in user's balance can never be greater than the total inflation
+    val transferredRewardsLessOrEqualInflation = val sumBalances = USERS.fold((0,1), (sum, user) => sum.add(delegators.get(user).balanceRewards))
+                                                 sumBalances.le(totalInflation)
 
+    // Invariant 11: The sum of rewards in user's balance plus the non-cliamed rewards is less than or equal to the total inflation
+    val rewardsLessOrEqualInflation = val sumBalances = USERS.fold((0,1), (sum, user) => sum.add(delegators.get(user).balanceRewards))
+                                      val pairsDelegatorValidator = tuples(USERS, VALIDATORS)
+                                      val sumNonTransferredRewards = pairsDelegatorValidator.fold((0,1), (total, pair) => val delegator = delegators.get(pair._1)
+                                                                                                                          val validator = validators.get(pair._2)
+                                                                                                                          val slashes = VALIDATORS.mapBy(v => validators.get(v).slashes)
+                                                                                                                          val totalRewards = computeAllRewards(delegator, validator, slashes)
+                                                                                                                          total.add(totalRewards))
+                                      sumBalances.add(sumNonTransferredRewards).le(totalInflation)
+    
     // Implementation invariants
 
     // delegator's bonded for a given validator and epoch is always greater or equal than redelegatedBonded for that epoch and validator
@@ -447,7 +518,9 @@ module namada {
                         stakeGreaterZero and
                         boundedBalance and
                         stakeEqualSumSlashedBonds and
-                        bondsGreaterRedelegations
+                        bondsGreaterRedelegations and
+                        transferredRewardsLessOrEqualInflation and
+                        rewardsLessOrEqualInflation
                   
     // All invariants without slash pool
     // Due to the lack of slashing pool posAccountZero and noSlashingStakeEqualSumBonds do not hold
@@ -457,9 +530,12 @@ module namada {
                                        totalAmountTokensConstant and
                                        stakeGreaterZero and
                                        boundedBalance and
-                                       // the following two only make sense in the context of redelegations
+                                       // the following two only make sense in the context of redelegations and rewards
                                        stakeEqualSumSlashedBonds and
-                                       bondsGreaterRedelegations
+                                       bondsGreaterRedelegations and
+                                       transferredRewardsLessOrEqualInflation and
+                                       rewardsLessOrEqualInflation
+
     
     // ****************************************************************************
     // Execution
@@ -470,7 +546,8 @@ module namada {
       validators' = validators,
       pos' = pos,
       lastTx' = lastTx,
-      nextInfractionEpoch' = nextInfractionEpoch
+      nextInfractionEpoch' = nextInfractionEpoch,
+      totalInflation' = totalInflation
     }
 
     // State initialization: assumes that users start with some initial balance.
@@ -482,7 +559,10 @@ module namada {
                                            bonded: VALIDATORS.mapBy(x => Map()),
                                            redelegatedBonded: VALIDATORS.mapBy(x => Map()),
                                            redelegatedUnbonded: VALIDATORS.mapBy(x => Map()),
-                                           unbonded: VALIDATORS.mapBy(x => Map())}),
+                                           unbonded: VALIDATORS.mapBy(x => Map()),
+                                           rewards: VALIDATORS.mapBy(x => (0,1)),
+                                           lastClaim: VALIDATORS.mapBy(x => initEpoch - 1),
+                                           balanceRewards: (0,1)}),
         validators' = VALIDATORS.mapBy(validator => {address: validator,
                                                      stake: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => 0),
                                                      totalUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
@@ -492,7 +572,9 @@ module namada {
                                                      incomingRedelegations: USERS.mapBy(user => -1),
                                                      outgoingRedelegations: VALIDATORS.setRemove(validator).mapBy(x => Map()),
                                                      slashes: List(),
-                                                     frozen: 0}),
+                                                     frozen: 0,
+                                                     commission: initEpoch.to(initEpoch+PIPELINE_OFFSET).mapBy(e => (1, 5)),
+                                                     rewardsProducts: Map()}),
         pos' = {posAccount: 0,
                 slashPool: 0,
                 epoch: initEpoch,
@@ -500,7 +582,8 @@ module namada {
                 counterInfractions: 0,
                 enqueuedSlashes: (initEpoch-CUBIC_OFFSET).to(initEpoch+CUBIC_OFFSET+UNBONDING_OFFSET).mapBy(e => Set())},
         lastTx' = { tag: "Init", result: true, user: "", validator: "", amount: 0},
-        nextInfractionEpoch' = VALIDATORS.mapBy(validator => 0)
+        nextInfractionEpoch' = VALIDATORS.mapBy(validator => 0),
+        totalInflation' = (0,1)
       }
     }
 
@@ -523,6 +606,7 @@ module namada {
             actionDelegate(user, validator, amountDelegate),
             actionUnbond(user, validator, amountUnbond),
             actionWithdraw(user, validator),
+            actionClaim(user, validator),
             actionEvidence(e, validator),
             actionRedelegate(user, validator, destValidator, amountUnbond),
             //allUnchanged
@@ -542,7 +626,10 @@ module namada {
                             bonded: USERS.mapBy(x => Map()),
                             redelegatedBonded: VALIDATORS.mapBy(x => Map()),
                             redelegatedUnbonded: VALIDATORS.mapBy(x => Map()),
-                            unbonded: USERS.mapBy(x => Map())}
+                            unbonded: USERS.mapBy(x => Map()),
+                            rewards: VALIDATORS.mapBy(x => (0,1)),
+                            lastClaim: VALIDATORS.mapBy(x => 0),
+                            balanceRewards: (0,1)}
       val validatorState = {address: "alice",
                             stake: 0.to(UNBONDING_OFFSET).mapBy(e => 0),
                             totalUnbonded: 1.to(1+PIPELINE_OFFSET).mapBy(e => Map()),
@@ -552,7 +639,9 @@ module namada {
                             incomingRedelegations: USERS.mapBy(user => -1),
                             outgoingRedelegations: VALIDATORS.mapBy(x => Map()),
                             slashes: List(),
-                            frozen: 0}
+                            frozen: 0,
+                            commission: 1.to(1+PIPELINE_OFFSET).mapBy(e => (1, 5)),
+                            rewardsProducts: Map()}
       val posState = {posAccount: 0,
                       slashPool: 0,
                       epoch: 1,
@@ -671,7 +760,10 @@ module namada {
                                            bonded: VALIDATORS.mapBy(x => if (x == "alice" and user == "alice") Map(UNBONDING_OFFSET + CUBIC_OFFSET - 1 -> 200000) else Map()),
                                            redelegatedBonded: VALIDATORS.mapBy(x => Map()),
                                            redelegatedUnbonded: VALIDATORS.mapBy(x => Map()),
-                                           unbonded: VALIDATORS.mapBy(x => Map())}),
+                                           unbonded: VALIDATORS.mapBy(x => Map()),
+                                           rewards: VALIDATORS.mapBy(x => (0,1)),
+                                           lastClaim: VALIDATORS.mapBy(x => initEpoch - 1),
+                                           balanceRewards: (0,1)}),
         validators' = VALIDATORS.mapBy(validator => {address: validator,
                                                      stake: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => if (validator=="alice" and e >= UNBONDING_OFFSET + CUBIC_OFFSET - 1) 200000 else 0),
                                                      totalUnbonded: 0.to(initEpoch+PIPELINE_OFFSET).mapBy(e => Map()),
@@ -681,7 +773,9 @@ module namada {
                                                      incomingRedelegations: USERS.mapBy(user => -1),
                                                      outgoingRedelegations: VALIDATORS.mapBy(x => Map()),
                                                      slashes: List(),
-                                                     frozen: 0}),
+                                                     frozen: 0,
+                                                     commission: initEpoch.to(initEpoch+PIPELINE_OFFSET).mapBy(e => (1, 5)),
+                                                     rewardsProducts: Map()}),
         pos' = {posAccount: 200000,
                 slashPool: 0,
                 epoch: initEpoch,
@@ -689,7 +783,8 @@ module namada {
                 counterInfractions: 0,
                 enqueuedSlashes: (initEpoch-CUBIC_OFFSET).to(initEpoch+CUBIC_OFFSET+UNBONDING_OFFSET).mapBy(e => Set())},
         lastTx' = { tag: "Init", result: true, user: "", validator: "", amount: 0},
-        nextInfractionEpoch' = VALIDATORS.mapBy(validator => 0)
+        nextInfractionEpoch' = VALIDATORS.mapBy(validator => 0),
+        totalInflation' = (0,1)
       }
     }
 
