@@ -184,6 +184,9 @@ module namada {
     // The function redelegate is called when a user wants to redelegate tokens from a source validator to a destination validator.
     // 1. The function first attempts to unbond the desired amount from the source validator.
     // 2. It only proceeds if the redelegation is not a chain redelegation and the unbonding succeeded.
+    //    - The design does not track chain redelegation precisely.
+    //    - Instead, it approximates it by preventing a validator from redelegating tokens belonging to a delegator if it has received a
+    //      redelegation of tokens belonging to the same delegator that ended less than UNBONDING_OFFSET + CUBIC_OFFSET epochs ago.
     // 3. It updates the delegator's variables bonded and redelegatedBonded to register that the target amount of tokens are now
     //    bonded to the destination validator.
     // 4. It registers the redelegation in the source validator's outgoingRedelegations variable.
