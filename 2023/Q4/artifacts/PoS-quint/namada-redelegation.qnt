@@ -326,16 +326,22 @@ module namada {
     }
 
     // The function proccessEvidence is called when a validator misbehaves.
-    // 1. It first creates a slash record.
-    // 2. Then it updates the validator's state by freezing the validator.
-    // 3. It finally enqueues the slash and schedules it to be proccessed at the end of the epoch resulting from adding UNBONDING_OFFSET
+    // 1. If first checks if the evidence is too old.
+    // 2. The function then creates a slash record.
+    // 3. Next, it updates the validator's state by freezing the validator.
+    // 4. It finally enqueues the slash and schedules it to be proccessed at the end of the epoch resulting from adding UNBONDING_OFFSET
     // to the misbehaving epoch. 
-    pure def proccessEvidence(e: Epoch, validator: ValidatorState, posState: PosState): {validator: ValidatorState, posState: PosState} = {
-      val id = posState.counterInfractions + 1
-      val infraction = {id: id, epoch: e, validator: validator.address}
-      {validator: validator.with("frozen", max(validator.frozen, e + CUBIC_OFFSET + UNBONDING_OFFSET)),
-       posState: posState.with("enqueuedSlashes", posState.enqueuedSlashes.set(e + CUBIC_OFFSET + UNBONDING_OFFSET, posState.enqueuedSlashes.get(e + CUBIC_OFFSET + UNBONDING_OFFSET).union(Set(infraction))))
-                         .with("counterInfractions", id)}
+    pure def proccessEvidence(e: Epoch, validator: ValidatorState, posState: PosState): {success: bool, validator: ValidatorState, posState: PosState} = {
+      if (e >= posState.epoch - UNBONDING_OFFSET and e <= posState.epoch) {
+        val id = posState.counterInfractions + 1
+        val infraction = {id: id, epoch: e, validator: validator.address}
+        {success: true, 
+         validator: validator.with("frozen", max(validator.frozen, e + CUBIC_OFFSET + UNBONDING_OFFSET)),
+         posState: posState.with("enqueuedSlashes", posState.enqueuedSlashes.set(e + CUBIC_OFFSET + UNBONDING_OFFSET, posState.enqueuedSlashes.get(e + CUBIC_OFFSET + UNBONDING_OFFSET).union(Set(infraction))))
+                           .with("counterInfractions", id)}
+      } else {
+        {success: false, validator: validator, posState: posState}
+      }
     }
 
 
@@ -428,11 +434,13 @@ module namada {
       require(limitEvidence == 2 implies validators.get(validator).frozen < e),
       val result = proccessEvidence(e, validators.get(validator), pos)
       all {
+        require(enforceStateTransition implies result.success),
         validators' = validators.set(validator, result.validator),
         pos' = result.posState,
         delegators' = delegators,
-        lastTx' = {tag: "Evidence", result: true, user: "", validator: validator, amount: e},
-        nextInfractionEpoch' = nextInfractionEpoch.set(validator, e + UNBONDING_OFFSET),
+        lastTx' = {tag: "Evidence", result: result.success, user: "", validator: validator, amount: e},
+        nextInfractionEpoch' = if (result.success) nextInfractionEpoch.set(validator, e + UNBONDING_OFFSET)
+                               else nextInfractionEpoch,
         totalInflation' = totalInflation
       }
     }
