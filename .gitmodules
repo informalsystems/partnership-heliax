@@ -1,6 +1,0 @@
-[submodule "2022/Q2/artifacts/spec"]
-	path = 2022/Q2/artifacts/spec
-	url = https://github.com/anoma/spec
-[submodule "2022/Q2/artifacts/anoma"]
-	path = 2022/Q2/artifacts/anoma
-	url = https://github.com/anoma/anoma
